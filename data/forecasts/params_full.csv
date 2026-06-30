@@ -1,0 +1,25 @@
+municipio,municipio_nome,tributo,modelo,aic,season,spec,aicc,error,trend,damped_trend,seasonal,seasonality_mode,holidays,order,seasonal_order,log_transform
+salvador,Salvador,IPTU,Naive,,12.0,,,,,,,,,,,
+salvador,Salvador,IPTU,ETS,4787.248196578747,,"ETS(A,A,M)",4793.3,add,add,False,mul,,,,,
+salvador,Salvador,IPTU,Prophet,,,,,,,,,multiplicative,BR,,,
+salvador,Salvador,IPTU,SARIMA,-38.33334901909798,,,,,,,,,,"(3, 1, 1)","(2, 0, 1, 12)",True
+salvador,Salvador,ISSQN,Naive,,12.0,,,,,,,,,,,
+salvador,Salvador,ISSQN,ETS,4660.279689766694,,"ETS(A,N,M)",4665.0,add,,False,mul,,,,,
+salvador,Salvador,ISSQN,Prophet,,,,,,,,,multiplicative,BR,,,
+salvador,Salvador,ISSQN,SARIMA,-280.764643079341,,,,,,,,,,"(0, 1, 2)","(1, 0, 1, 12)",True
+camacari,Camaçari,IPTU,Naive,,12.0,,,,,,,,,,,
+camacari,Camaçari,IPTU,ETS,4786.586052997025,,"ETS(A,N,M)",4791.3,add,,False,mul,,,,,
+camacari,Camaçari,IPTU,Prophet,,,,,,,,,multiplicative,BR,,,
+camacari,Camaçari,IPTU,SARIMA,274.57203486095204,,,,,,,,,,"(2, 1, 1)","(1, 0, 2, 12)",True
+camacari,Camaçari,ISSQN,Naive,,12.0,,,,,,,,,,,
+camacari,Camaçari,ISSQN,ETS,4216.071705792792,,"ETS(A,N,M)",4220.8,add,,False,mul,,,,,
+camacari,Camaçari,ISSQN,Prophet,,,,,,,,,multiplicative,BR,,,
+camacari,Camaçari,ISSQN,SARIMA,-222.97088493000075,,,,,,,,,,"(2, 1, 0)","(1, 0, 1, 12)",True
+ilheus,Ilhéus,IPTU,Naive,,12.0,,,,,,,,,,,
+ilheus,Ilhéus,IPTU,ETS,4119.429074885262,,"ETS(A,N,M)",4124.2,add,,False,mul,,,,,
+ilheus,Ilhéus,IPTU,Prophet,,,,,,,,,multiplicative,BR,,,
+ilheus,Ilhéus,IPTU,SARIMA,179.03730325336568,,,,,,,,,,"(2, 1, 1)","(1, 0, 1, 12)",True
+ilheus,Ilhéus,ISSQN,Naive,,12.0,,,,,,,,,,,
+ilheus,Ilhéus,ISSQN,ETS,4082.1431071239067,,"ETS(A,N,M)",4086.9,add,,False,mul,,,,,
+ilheus,Ilhéus,ISSQN,Prophet,,,,,,,,,multiplicative,BR,,,
+ilheus,Ilhéus,ISSQN,SARIMA,58.62435436444514,,,,,,,,,,"(1, 1, 1)","(2, 0, 0, 12)",True

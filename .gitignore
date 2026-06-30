@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Local manuscript/output state
+.tcc-pipeline.json
+figures/generated/
+tables/generated/
+
+# Scratch runs and backups
+_*/
+scratch/
+tmp/

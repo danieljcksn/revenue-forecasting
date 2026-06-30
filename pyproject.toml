@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "revenue-forecasting"
+version = "0.1.0"
+description = "Reproducible municipal tax revenue forecasting experiments"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Daniel Jackson Cavalcante Costa" }]
+keywords = [
+    "time-series-forecasting",
+    "municipal-finance",
+    "tax-revenue",
+    "sarima",
+    "prophet",
+    "ets",
+    "reproducible-research",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    # Data collection package used by the analysis pipeline.
+    # For local development, install it from the sibling repository:
+    # pip install -e ../siconfi-collector
+    "siconfi-collector",
+    # Data handling and analysis.
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "scikit-learn>=1.3",
+    # Classical time-series models.
+    "statsmodels>=0.14",
+    "pmdarima>=2.0",
+    # Structural model.
+    "prophet>=1.1",
+    # Visualization.
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    # IPCA series access through Banco Central do Brasil.
+    "python-bcb>=0.3",
+    # Notebooks.
+    "jupyterlab>=4.0",
+    "ipykernel>=6.25",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+]
+# Canonical heavy run dependency: scalable automatic selection with
+# statsforecast (AutoETS, AutoARIMA, AutoTheta), which produced the six-method
+# portfolio cached under data/forecasts/. Pinned in requirements-sf-lock.txt.
+precisao = [
+    "statsforecast>=2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 99
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

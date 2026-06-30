@@ -1,0 +1,6 @@
+imputed: [('Feira de Santana', 'ISSQN', 2017), ('Camaçari', 'ISSQN', 2016), ('Jequié', 'IPTU', 2017), ('Jequié', 'ISSQN', 2017), ('Barreiras', 'ISSQN', 2015), ('Porto Seguro', 'ISSQN', 2016), ('Candeias', 'IPTU', 2017)]
+interpolated: [('Alagoinhas', 'IPTU', 1), ('Simões Filho', 'IPTU', 1)]
+excluded: [('Feira de Santana', 'IPTU', 'valor mensal nao-positivo'), ('Teixeira de Freitas', 'ISSQN', 'valor mensal nao-positivo'), ('Porto Seguro', 'IPTU', '8 meses ausentes'), ('Paulo Afonso', 'IPTU', 'valor mensal nao-positivo'), ('Santo Antônio de Jesus', 'IPTU', '11 meses ausentes'), ('Valença', 'IPTU', 'cobertura < 120 meses'), ('Valença', 'ISSQN', 'cobertura < 120 meses')]
+absent: []
+fit_failed: []
+series_avaliadas: 31

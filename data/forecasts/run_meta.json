@@ -1,0 +1,36 @@
+{
+  "fits": {
+    "salvador-IPTU-Naive": 0.1,
+    "salvador-IPTU-ETS": 15.0,
+    "salvador-IPTU-Prophet": 33.2,
+    "salvador-IPTU-SARIMA": 42.1,
+    "salvador-ISSQN-Naive": 0.1,
+    "salvador-ISSQN-ETS": 11.1,
+    "salvador-ISSQN-Prophet": 35.5,
+    "salvador-ISSQN-SARIMA": 59.3,
+    "camacari-IPTU-Naive": 0.1,
+    "camacari-IPTU-ETS": 25.3,
+    "camacari-IPTU-Prophet": 35.8,
+    "camacari-IPTU-SARIMA": 49.2,
+    "camacari-ISSQN-Naive": 0.1,
+    "camacari-ISSQN-ETS": 14.5,
+    "camacari-ISSQN-Prophet": 45.6,
+    "camacari-ISSQN-SARIMA": 60.4,
+    "ilheus-IPTU-Naive": 0.1,
+    "ilheus-IPTU-ETS": 29.2,
+    "ilheus-IPTU-Prophet": 33.0,
+    "ilheus-IPTU-SARIMA": 29.6,
+    "ilheus-ISSQN-Naive": 0.0,
+    "ilheus-ISSQN-ETS": 12.3,
+    "ilheus-ISSQN-Prophet": 38.1,
+    "ilheus-ISSQN-SARIMA": 22.1
+  },
+  "series": {
+    "salvador-IPTU": 132,
+    "salvador-ISSQN": 132,
+    "camacari-IPTU": 132,
+    "camacari-ISSQN": 132,
+    "ilheus-IPTU": 132,
+    "ilheus-ISSQN": 132
+  }
+}
