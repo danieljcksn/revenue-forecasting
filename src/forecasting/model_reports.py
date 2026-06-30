@@ -175,22 +175,30 @@ def forecasts_consolidated_figure(cfg: PipelineConfig) -> Path:
     setup_matplotlib_thesis()
     cv = load_cv(cfg)
     series = prepare_series(cfg, impute=True)
-    fig, axes = plt.subplots(3, 2, figsize=(6.3, 6.8), sharex=True)
+    first_forecast = cv["target_date"].min()
+    x_start = first_forecast - pd.DateOffset(months=12)
+    x_end = cv["target_date"].max()
+    fig, axes = plt.subplots(3, 2, figsize=(6.3, 7.0), sharex=True)
     for r, mk in enumerate(_MUN_ORDER):
         for c, trib in enumerate(_TAX_ORDER):
             ax = axes[r, c]
             s = series[(mk, trib)] / 1e6
-            ax.plot(s.index, s.to_numpy(), color="0.62", lw=1.5, zorder=1)
+            s_view = s.loc[(s.index >= x_start) & (s.index <= x_end)]
+            ax.plot(s_view.index, s_view.to_numpy(), color="#2F2D29",
+                    lw=1.7, alpha=0.82, zorder=3)
+            ax.axvline(first_forecast, color="#B4B0A6", lw=0.8,
+                       ls=(0, (3, 3)), zorder=1)
             for mname, _lab, color in _MODEL_STYLE:
                 sub = cv[(cv["municipio"] == mk) & (cv["tributo"] == trib) &
                          (cv["modelo"] == mname) & (cv["step"] == 1)].sort_values("target_date")
                 ax.plot(sub["target_date"], sub["y_pred"] / 1e6, color=color,
-                        lw=0.8, alpha=0.85, zorder=2)
+                        lw=0.95, alpha=0.88, zorder=2)
+            ax.set_xlim(x_start, x_end)
             if r == 0:
                 ax.set_title(trib)
             if c == 0:
                 ax.set_ylabel(f"{_MUN_LABEL[mk]}\n(R\\$ milhões)")
-    handles = [Line2D([0], [0], color="0.62", lw=1.5, label="Realizado")]
+    handles = [Line2D([0], [0], color="#2F2D29", lw=1.7, label="Realizado")]
     handles += [Line2D([0], [0], color=color, lw=1.4, label=lab)
                 for _m, lab, color in _MODEL_STYLE]
     fig.legend(handles=handles, loc="outside upper center", ncol=4)

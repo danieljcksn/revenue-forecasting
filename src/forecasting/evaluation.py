@@ -414,6 +414,89 @@ def mase_heatmap(cfg: PipelineConfig) -> Path:
     return out
 
 
+def skill_heatmap(cfg: PipelineConfig) -> Path:
+    """Generate skill score vs seasonal Naive for annual-horizon forecasts."""
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+
+    from forecasting.config import MODEL_LABELS
+    from forecasting.plotting import save_figure, setup_matplotlib_thesis
+
+    setup_matplotlib_thesis()
+    cv = load_cv(cfg)
+    h12 = cv[cv["step"] == 12].copy()
+    h12["serie"] = h12["municipio_nome"] + "\n" + h12["tributo"]
+
+    row_models = [m for m in MODEL_ORDER if m != "Naive"]
+    series_order = [f"{name}\n{trib}" for _mk, name, trib in series_keys(cfg)]
+    mae = (
+        h12.groupby(["serie", "modelo"])["abs_err"]
+        .mean()
+        .unstack("modelo")
+        .reindex(series_order)
+    )
+    skill = pd.DataFrame({m: 1.0 - mae[m] / mae["Naive"] for m in row_models})
+    values = skill[row_models].to_numpy().T
+
+    cmap = LinearSegmentedColormap.from_list(
+        "skill_diverging", ["#A6552F", "#F3EFE6", "#3F7268"]
+    )
+    norm = TwoSlopeNorm(vmin=-0.6, vcenter=0.0, vmax=0.6)
+
+    fig, ax = plt.subplots(figsize=(6.2, 3.25))
+    mesh = ax.pcolormesh(
+        values,
+        cmap=cmap,
+        norm=norm,
+        edgecolors="#FBF8F1",
+        linewidth=1.0,
+        antialiased=True,
+    )
+    mesh.set_rasterized(False)
+
+    ax.set_xticks(np.arange(len(series_order)) + 0.5)
+    ax.set_xticklabels(
+        [s.replace("Salvador", "Sal.").replace("CamaÃ§ari", "Cam.").replace("IlhÃ©us", "Ilh.")
+         for s in series_order],
+        fontsize=7.8,
+    )
+    ax.set_yticks(np.arange(len(row_models)) + 0.5)
+    ax.set_yticklabels([MODEL_LABELS[m] for m in row_models], fontsize=8.6)
+    ax.invert_yaxis()
+    ax.tick_params(length=0, pad=4)
+    ax.grid(False)
+
+    for i, model in enumerate(row_models):
+        for j, serie in enumerate(series_order):
+            val = float(skill.loc[serie, model])
+            color = "#FBF8F1" if abs(norm(val) - 0.5) > 0.34 else "#33302B"
+            ax.text(
+                j + 0.5,
+                i + 0.5,
+                f"{val:+.2f}",
+                ha="center",
+                va="center",
+                fontsize=7.4,
+                color=color,
+                fontweight="bold" if val > 0 else "regular",
+            )
+
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_title(
+        "Skill score vs Naive em $h = 12$ (verde: vence; vermelho: perde)",
+        fontsize=9.2,
+        pad=8,
+    )
+    cbar = fig.colorbar(mesh, ax=ax, orientation="horizontal", fraction=0.055, pad=0.16)
+    cbar.set_label("1 - MAE(modelo) / MAE(Naive)", fontsize=7.6)
+    cbar.ax.tick_params(labelsize=7, length=0)
+
+    out = save_figure(fig, "fig_skill_heatmap", cfg.figures_dir_abs)
+    plt.close(fig)
+    return out
+
+
 def horizonte_curva(cfg: PipelineConfig) -> Path:
     """Gera fig_horizonte_curva.pdf: MASE mediano de cada modelo ao longo do
     horizonte (h = 1..12).
@@ -524,5 +607,6 @@ def run_all(cfg: PipelineConfig) -> list[Path]:
         metrics_table(cfg),
         municipality_rank_table(cfg),
         mase_boxplot(cfg),
+        skill_heatmap(cfg),
         covid_regime_note(cfg),
     ]
