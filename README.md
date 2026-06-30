@@ -42,15 +42,15 @@ figures are generated from the canonical cache.
 
 ```text
 revenue-forecasting/
-├── data/
-│   ├── ipca_sgs433.csv
-│   └── forecasts/              # canonical forecast caches used by the thesis
-├── notebooks/                  # thin executable notebooks
-├── scripts/
-│   ├── run_pipeline.py          # four-model core training driver
-│   └── build_tex_artifacts.py   # regenerates manuscript tables and figures
-├── src/forecasting/             # reusable analysis package
-└── tests/                       # methodological and smoke tests
+|-- data/
+|   |-- ipca_sgs433.csv
+|   `-- forecasts/              # canonical forecast caches used by the thesis
+|-- notebooks/                  # thin executable notebooks
+|-- scripts/
+|   |-- run_pipeline.py          # four-model core training driver
+|   `-- build_tex_artifacts.py   # regenerates manuscript tables and figures
+|-- src/forecasting/             # reusable analysis package
+`-- tests/                       # methodological and smoke tests
 ```
 
 ## Setup
@@ -100,3 +100,7 @@ python -m pytest
 The tests cover the main methodological risks: MASE denominator, IPCA deflation,
 known anomaly imputation, rolling-origin leakage, annual aggregation, model
 factory structure, and smoke tests for installed model backends.
+
+## License
+
+Released under the MIT License. See [`LICENSE`](LICENSE).

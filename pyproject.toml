@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Reproducible municipal tax revenue forecasting experiments"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Daniel Jackson Cavalcante Costa" }]
 keywords = [
@@ -22,6 +23,7 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -65,6 +67,11 @@ dev = [
 precisao = [
     "statsforecast>=2.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/danieljcksn/revenue-forecasting"
+Issues = "https://github.com/danieljcksn/revenue-forecasting/issues"
+Collector = "https://github.com/danieljcksn/siconfi-collector"
 
 [tool.setuptools.packages.find]
 where = ["src"]
