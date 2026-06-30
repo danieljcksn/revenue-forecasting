@@ -1,14 +1,7 @@
-"""Metricas de erro e ranque inter-municipal.
+"""Error metrics, model rankings, and evaluation figures.
 
-Gera artefatos das Secoes 5.3 e 5.4 do TCC. Escopo enxuto:
-- Pontuais: MAE, MAPE, MASE
-- Tabelas: metricas consolidadas e ranque dos modelos por municipio
-- Figuras: boxplot do MASE por modelo (com facetas h=1 e h=12)
-
-Decisao deliberada: ficamos com tres metricas complementares e ranking
-visual, sem teste de Diebold-Mariano. Para um TCC com 6 series e poucas
-dobras, diferencas de MASE > 10% ja sao narrativamente robustas; o teste
-DM-HLN seria custo de defesa elevado para ganho informativo modesto.
+Computes MAE, MAPE, and MASE from the rolling-origin cache and exports summary
+tables plus comparison figures.
 """
 
 from __future__ import annotations
@@ -100,7 +93,7 @@ def mase(
     return mae(y_true, y_pred) / scale
 
 
-# ---------- Geracao de artefatos para o TCC ------------------------------
+# ---------- Generated artifacts -----------------------------------------
 
 
 # ---------- Camada analitica (le o cache da validacao por origem movel) ---
@@ -363,7 +356,7 @@ def mase_heatmap(cfg: PipelineConfig) -> Path:
     # Mapa sequencial quente da casa: creme (MASE baixo/bom) -> tinta escura
     # (alto/ruim), derivado do bege do documento.
     cmap = LinearSegmentedColormap.from_list(
-        "tcc_warm", ["#F4EFE4", "#D8C39A", "#B98C4E", "#8A5A2B", "#45413A"])
+        "forecast_warm", ["#F4EFE4", "#D8C39A", "#B98C4E", "#8A5A2B", "#45413A"])
     norm = Normalize(vmin=0.2, vmax=1.7)
 
     fig, ax = plt.subplots(figsize=(6.0, 3.5))
@@ -496,7 +489,7 @@ def covid_regime_note(cfg: PipelineConfig) -> Path:
     pandemia (2021) versus o regime de normalizacao (2022--2025), por modelo
     e horizonte, e grava em ``data/forecasts/covid_regime.txt``. Da
     proveniencia auditavel aos numeros citados na nota sobre o periodo
-    pandemico (Secao 5 dos resultados).
+    pandemico.
     """
     from forecasting.models import covid_regime
 

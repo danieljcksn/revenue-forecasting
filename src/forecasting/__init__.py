@@ -1,6 +1,6 @@
-"""Pacote `forecasting` - infraestrutura de analise do trabalho.
+"""Forecasting analysis package.
 
-Escopo empirico principal:
+Main empirical scope:
 
 - 3 municipios baianos (Salvador, Camacari, Ilheus)
 - 2 tributos proprios (IPTU, ISSQN)
@@ -13,14 +13,14 @@ Escopo empirico principal:
 O driver historico em ``scripts/run_pipeline.py`` reproduz o nucleo original de
 quatro modelos; os artefatos finais usam o cache canonico em ``data/forecasts/``.
 
-Modulos:
-    config       carregamento de .tcc-pipeline.json, constantes e formatadores
-    io           leitura/escrita de artefatos do TCC
-    plotting     estilo visual padronizado
-    eda          analise exploratoria (gera artefatos do Cap 5.1)
-    models       wrappers de treinamento dos quatro modelos
-    evaluation   metricas e ranque por municipio
-    benchmarks   comparacao com prefeitura e Oliveira (2024)
+Modules:
+    config       configuration, constants, and formatters
+    io           forecast-cache and artifact IO
+    plotting     shared visual style
+    eda          exploratory analysis and series preparation
+    models       model training wrappers
+    evaluation   metrics and model rankings
+    benchmarks   external benchmark comparisons
 
 Os notebooks em ``notebooks/`` sao clientes finos destes modulos.
 Este projeto consome o pacote `siconfi-collector` como dependencia.

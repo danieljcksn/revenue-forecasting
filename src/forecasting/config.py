@@ -1,14 +1,8 @@
-"""Carregamento da configuracao do pipeline a partir de .tcc-pipeline.json.
+"""Pipeline configuration loader.
 
-Permite que notebooks e scripts saibam, por convencao unificada:
-- Onde esta o repo do TCC (para gravar tabelas/figuras).
-- Onde estao os dados crus do siconfi-collector (CSVs coletados da API).
-- Onde gravar previsoes geradas (analysis/data/forecasts/).
-- Quais municipios e tributos compoem a amostra.
-- Janela COVID, base do IPCA, horizontes de previsao.
-
-A funcao `load_config()` busca o arquivo subindo ate encontrar
-`.tcc-pipeline.json` ou em paths conhecidos.
+The `.tcc-pipeline.json` file records manuscript output paths, collector data
+paths, forecast-cache locations, sample definitions, and shared parameters.
+`load_config()` searches upward from the current directory.
 """
 
 from __future__ import annotations
@@ -121,21 +115,13 @@ def load_config(path: Path | str | None = None) -> PipelineConfig:
 
 
 # =============================================================================
-# FONTE UNICA DE VERDADE: identidade dos modelos, cor, rotulos e formatacao.
-# Antes duplicados em plotting/model_reports/evaluation/benchmarks/generalization
-# /tex_export/eda. Tudo abaixo e a unica definicao; os demais modulos importam.
+# Single source of truth: model identity, colors, labels, and formatting.
 # =============================================================================
 
-# Cor primaria da marca munitax (plataforma de destino aplicado; ver Cap. 1 e 7).
-# Reserva de marca; NAO usada nas figuras, que seguem o tema bege do documento.
+# Primary product color. Kept separate from model colors.
 MUNITAX_BLUE = "#0582FF"
 
-# Paleta categorica QUENTE, harmonizada com o tema bege das figuras (themeAccent
-# e derivados em main.tex) e com as figuras TikZ do Cap. 3/4. Tons terrosos
-# dessaturados, distinguiveis por matiz e com varia\c{c}ao de luminosidade para
-# degradar de forma aceitavel em P&B. FONTE UNICA de cor de modelo do documento;
-# nao reaproveitar para elementos nao-modelo. Ordem dos indices preservada
-# (0=Naive, 1=SARIMA, 2=ETS, 3=Prophet) para o mapeamento de MODEL_COLORS.
+# Warm categorical palette for model series.
 THESIS_PALETTE = [
     "#9C8466",  # taupe/caqui (Naive, baseline neutro)
     "#C0703A",  # terracota (SARIMA)
@@ -147,23 +133,18 @@ THESIS_PALETTE = [
     "#B7A98C",  # areia (reserva)
 ]
 
-# Ordem canonica dos modelos: baseline Naive + tres formais originais + Theta
-# (parcimonioso, M3) + Ensemble (combinacao, ultimo por ser agregador).
+# Canonical model order: baseline, individual models, aggregate model.
 MODEL_ORDER = ["Naive", "ETS", "SARIMA", "Prophet", "Theta", "Ensemble"]
 
-# Rotulo LaTeX para as TABELAS .tex (Naive -> Na\"ive, acento via comando \").
+# LaTeX labels for generated tables.
 MODEL_TEX = {"Naive": "Na\\\"ive", "ETS": "ETS", "SARIMA": "SARIMA",
              "Prophet": "Prophet", "Theta": "Theta", "Ensemble": "Ensemble"}
 
-# Rotulo de EXIBICAO para matplotlib/figuras (unicode).
+# Display labels for matplotlib figures.
 MODEL_LABELS = {"Naive": "Naïve", "ETS": "ETS", "SARIMA": "SARIMA",
                 "Prophet": "Prophet", "Theta": "Theta", "Ensemble": "Ensemble"}
 
-# Cor canonica por modelo, derivada da paleta quente (SEM hex solto): cada modelo
-# tem UMA cor, usada em TODAS as figuras para o leitor associar cor a modelo.
-#   Naive=taupe[0], SARIMA=terracota[1], ETS=verde-musgo[2], Prophet=malva[3].
-#   Theta=ameixa[5], Ensemble=rust[4] (reservas; nao near-black, p/ nao confundir
-#   com a serie Realizada). Os quatro originais permanecem inalterados.
+# Canonical model colors used consistently across figures.
 MODEL_COLORS = {
     "Naive":    THESIS_PALETTE[0],
     "ETS":      THESIS_PALETTE[2],
@@ -207,18 +188,16 @@ def format_int(value: int | None) -> str:
     return f"{int(value):,}".replace(",", ".")
 
 
-# ---------- Estilo de tabela do documento (identidade visual munitax) --------
+# ---------- Generated-table style -------------------------------------------
 
 def styled_table(*, gerado_por: str, caption: str, label: str, colspec: str,
                  header: list[str], rows: list[str], fonte: str,
                  footnote: str | None = None, stripe: bool = True,
                  size: str = "small") -> str:
-    r"""Monta uma tabela na CASA DE ESTILO do documento (FONTE UNICA do estilo).
+    r"""Build a styled LaTeX table.
 
-    Largura total (``tabularx`` + ``\linewidth``), cabecalho na cor-marca munitax
-    com texto branco em negrito, zebra discreta opcional, regras finas e
-    entrelinha folgada. As cores/macros (``munitax``, ``munitaxstripe``,
-    ``\thd``) vem do preambulo do ``main.tex``.
+    Uses ``tabularx`` at full text width, a styled header, optional zebra
+    stripes, thin rules, and slightly expanded line spacing.
 
     Parameters
     ----------
@@ -233,18 +212,12 @@ def styled_table(*, gerado_por: str, caption: str, label: str, colspec: str,
     head = ("\\rowcolor{tblHeader}\n"
             + " & ".join(f"\\thd{{{c}}}" for c in header) + " \\\\")
     zebra = "\\rowcolors{2}{white}{tblStripe}\n" if stripe else ""
-    # Apos \end{tcolorbox} estamos em modo vertical; \fonte (e \\) exigem uma
-    # "linha". Com nota de rodape, o texto da nota fornece essa linha; sem nota,
-    # \leavevmode a cria. Por isso NAO se usa \\ aqui.
+    # After tcolorbox LaTeX is in vertical mode; \fonte needs a paragraph.
     foot = f"\\vspace{{3pt}}\n{{\\footnotesize {footnote}}}\n" if footnote else ""
     src = (f"\\fonte{{{fonte}}}\n" if footnote
            else f"\\leavevmode\\fonte{{{fonte}}}\n")
     body = "\n".join(rows)
-    # Cartao de cantos arredondados: SEM padding interno (left/right/top/bottom=0)
-    # para o cabecalho sangrar ate a moldura (a folga lateral do texto vem do
-    # \tabcolsep das colunas de borda, ja que removemos o @{}); "clip upper"
-    # recorta o conteudo a moldura -> cantos do cabecalho arredondados, sem
-    # "dentes" quadrados. NAO ha espaco branco acima do cabecalho.
+    # No inner padding: header color reaches the rounded border cleanly.
     box = ("\\begin{tcolorbox}[enhanced,colback=white,colframe=tblBorder,"
            "boxrule=0.6pt,arc=4pt,boxsep=0pt,left=0pt,right=0pt,top=0pt,"
            "bottom=0pt,width=\\textwidth,clip upper,before skip=2pt,after skip=2pt]")
@@ -267,12 +240,10 @@ def styled_table(*, gerado_por: str, caption: str, label: str, colspec: str,
     )
 
 
-# ---------- Chaves de serie derivadas do cfg (sem listas cravadas) -----------
+# ---------- Series keys derived from config ----------------------------------
 
 def series_keys(cfg: PipelineConfig) -> list[tuple[str, str, str]]:
-    """As seis (ou N) series como ``(municipio_key, municipio_nome, tributo)`` na
-    ordem canonica (municipios do cfg x tributos do cfg). Substitui as listas das
-    seis series antes recriadas a mao em varias funcoes."""
+    """Return series as ``(municipio_key, municipio_nome, tributo)`` tuples."""
     return [(m.key, m.name, t)
             for m in cfg.municipalities.values()
             for t in cfg.tributos]

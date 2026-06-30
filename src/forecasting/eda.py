@@ -1,11 +1,8 @@
-"""Analise exploratoria - gera os artefatos da Secao 5.1 do TCC.
+"""Exploratory analysis and series preparation.
 
 Cada funcao publica produz um artefato canonico (tabela .tex ou figura .pdf) e
-retorna o path final. As tres tabelas compartilham o helper interno
-``_write_table`` (estrutura ABNT ``\\begin{table}...\\fonte``); as figuras usam
-``plotting.setup_matplotlib_thesis``. Escopo: estacionariedade por ADF + KPSS
-(sem Phillips-Perron); estabilizacao de variancia por log (sem Box-Cox); sem
-ajuste de dias uteis (confundente conhecida, nao tratada).
+retorna o path final. The module also holds the canonical deflation and anomaly
+treatment used by downstream models.
 """
 
 from __future__ import annotations
@@ -345,7 +342,7 @@ def stationarity_table(cfg: PipelineConfig, monthly_df: pd.DataFrame | None = No
     (sugerida pelo teste OCSB), e as forcas de tendencia e sazonalidade
     extraidas da decomposicao STL. A combinacao dos dois testes evita o
     diagnostico de um so lado e alimenta diretamente a busca do ``auto_arima``
-    (Secao 4.5.4).
+    before modeling.
     """
     from pmdarima.arima.utils import ndiffs, nsdiffs
     from statsmodels.tsa.stattools import adfuller, kpss

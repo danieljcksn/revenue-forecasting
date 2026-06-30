@@ -1,4 +1,4 @@
-"""IO especifico do TCC: leitura/escrita de previsoes e artefatos.
+"""Read and write forecast caches and generated artifacts.
 
 Centraliza nomenclatura canonica de arquivos.
 """
@@ -11,7 +11,7 @@ import pandas as pd
 
 from forecasting.config import PipelineConfig
 
-# ---------- Forecasts (saida do notebook 03) -----------------------------
+# ---------- Forecast files ------------------------------------------------
 
 
 def forecast_path(
@@ -47,29 +47,28 @@ def save_forecast(
 
 
 def table_path(cfg: PipelineConfig, name: str) -> Path:
-    """Caminho de tabela LaTeX (.tex) gerada para o TCC."""
+    """Path for a generated LaTeX table."""
     if not name.endswith(".tex"):
         name = f"{name}.tex"
     return cfg.tables_dir_abs / name
 
 
 def figure_path(cfg: PipelineConfig, name: str) -> Path:
-    """Caminho de figura PDF gerada para o TCC."""
+    """Path for a generated PDF figure."""
     if not name.endswith(".pdf"):
         name = f"{name}.pdf"
     return cfg.figures_dir_abs / name
 
 
-# ---------- Dados crus do siconfi (saida do siconfi-collector) -----------
+# ---------- Collector outputs --------------------------------------------
 
-# O TCC chama de "ISSQN"; o RREO-Anexo 03 (e portanto o monthly_revenue.csv)
-# usa a coluna "iss". Mapeia o nome do tributo no .tcc-pipeline.json para o
-# nome da coluna no CSV.
+# The collector stores ISSQN as the CSV column "iss"; analysis code uses the
+# public tax label "ISSQN".
 TRIBUTO_COLUMN = {"IPTU": "iptu", "ISSQN": "iss", "ITBI": "itbi"}
 
 
 def tributo_column(tributo: str) -> str:
-    """Retorna o nome da coluna no monthly_revenue.csv para um tributo do TCC."""
+    """Return the monthly_revenue.csv column name for a tax label."""
     return TRIBUTO_COLUMN.get(tributo, tributo.lower())
 
 
@@ -78,9 +77,8 @@ def load_monthly_series(cfg: PipelineConfig) -> pd.DataFrame:
 
     Colunas: cod_ibge, entity_name, uf, year, month, month_name, date,
     e uma coluna por categoria de receita (iptu, iss, itbi, fpm, icms, ...).
-    Use `tributo_column("ISSQN")` -> "iss" para mapear nomes do TCC para
-    colunas do CSV. O DataFrame inclui todos os municipios coletados; filtre
-    para `cfg.municipalities` no notebook.
+    Use `tributo_column("ISSQN")` -> "iss" to map public labels to CSV
+    columns. The DataFrame includes all collected municipalities.
     """
     path = cfg.siconfi_data_dir / "transformed" / "monthly_revenue.csv"
     return pd.read_csv(path, parse_dates=["date"])

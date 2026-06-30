@@ -1,19 +1,9 @@
-"""Analise de generalizacao: estende o estudo aos municipios baianos populosos.
+"""Generalization run for larger Bahia municipalities.
 
-O nucleo do TCC examina em profundidade tres municipios de perfis economicos
-contrastantes (Salvador, Camacari, Ilheus). Esta camada acrescenta BREADTH:
-aplica o mesmo pipeline a todos os municipios baianos com mais de cem mil
-habitantes --- o mesmo recorte de Oliveira (2024) --- para verificar se os
-padroes observados nos tres casos se sustentam num conjunto mais amplo. O
-objetivo nao e detalhar cada serie, mas medir, no agregado: (i) com que
-frequencia cada modelo vence; (ii) se a previsibilidade IPTU > ISSQN persiste;
-(iii) a taxa de superacao da previsao da propria prefeitura.
-
-Tratamento de qualidade: cada serie passa por um detector de anos anomalos
-(total zero ou abaixo de 55% da media dos anos adjacentes). Anos isolados sao
-imputados por sazonal naive a partir dos exercicios vizinhos; series com mais
-de dois anos comprometidos sao excluidas e o fato e registrado, para nao
-contaminar o agregado.
+Applies the same rolling-origin pipeline to municipalities with more than
+100,000 inhabitants. Each series passes a quality screen before modeling:
+isolated anomalous years are imputed, while severely compromised series are
+excluded and logged.
 """
 
 from __future__ import annotations
@@ -33,8 +23,7 @@ from forecasting.config import (
 
 warnings.filterwarnings("ignore")
 
-# Municipios baianos com mais de 100 mil habitantes (IBGE 2022) -- recorte de
-# Oliveira (2024). (cod_ibge, nome).
+# Bahia municipalities with more than 100,000 inhabitants (IBGE 2022).
 POPULOUS_BA: list[tuple[int, str]] = [
     (2927408, "Salvador"), (2910800, "Feira de Santana"),
     (2933307, "Vitória da Conquista"), (2905701, "Camaçari"),
@@ -45,8 +34,7 @@ POPULOUS_BA: list[tuple[int, str]] = [
     (2928604, "Santo Antônio de Jesus"), (2932507, "Valença"), (2906501, "Candeias"),
 ]
 
-# --- Limiares do controle de qualidade das series estendidas (decisoes
-#     metodologicas; mesmos valores de antes, agora nomeados e justificados). ---
+# --- Quality-control thresholds for extended series. ----------------------
 _MIN_COBERTURA_MESES = 120  # >= 120 meses (10 anos) de cobertura p/ a serie entrar
 _ANO_COMPLETO_MESES = 10    # so anos com >= 10 meses contam no teste de queda de nivel
 _QUEDA_NIVEL_FRAC = 0.55    # ano "cai de nivel" se ficar < 55% da media dos vizinhos
@@ -104,11 +92,8 @@ def prepare_extended_series(cfg: PipelineConfig):
             if s.notna().sum() < _MIN_COBERTURA_MESES:
                 log["excluded"].append((nome, tributo, "cobertura < 120 meses"))
                 continue
-            # Valores mensais nao-positivos (estornos/retificacoes contabeis)
-            # sao incompativeis com a transformacao log do SARIMA: log(neg)=NaN,
-            # que o statsmodels absorve silenciosamente como dado faltante,
-            # contaminando as metricas de forma dependente da posicao. Excluem-se
-            # essas series de forma explicita e simetrica para os quatro modelos.
+            # Non-positive values are incompatible with log-based SARIMA and
+            # would make comparisons model-dependent.
             if (s <= 0).any():
                 log["excluded"].append((nome, tributo, "valor mensal nao-positivo"))
                 continue
@@ -119,8 +104,7 @@ def prepare_extended_series(cfg: PipelineConfig):
             for yr in bad:
                 s = impute_anomalous_year(s, yr)
                 log["imputed"].append((nome, tributo, yr))
-            # lacunas isoladas (ate 2 meses consecutivos): interpolacao linear;
-            # gaps maiores tornam a serie inutilizavel -> exclui.
+            # Isolated gaps are interpolated; larger gaps exclude the series.
             n_nan = int(s.isna().sum())
             if n_nan:
                 s = s.interpolate(method="linear", limit=_INTERP_MAX_GAP, limit_area="inside")
@@ -146,10 +130,8 @@ def run_generalization(cfg: PipelineConfig) -> Path:
     log.setdefault("fit_failed", [])
     frames = []
     for (cod, nome, tributo), s in series.items():
-        # Isola cada serie: uma falha de ajuste (modelo que diverge numa janela
-        # expandida e produz NaN/inf) e registrada e a serie e descartada
-        # inteira, para que toda serie remanescente compare os quatro modelos
-        # sob exatamente as mesmas dobras. Nao se contamina o agregado.
+        # If any model fails on a series, discard that whole series so remaining
+        # comparisons use identical folds across models.
         try:
             fitters = M.make_fitters(s)
             series_frames = []
@@ -173,7 +155,7 @@ def run_generalization(cfg: PipelineConfig) -> Path:
     cv_all = pd.concat(frames, ignore_index=True)
     out = cfg.forecasts_dir / "cv_extended.csv"
     cv_all.to_csv(out, index=False, encoding="utf-8")
-    # log de tratamento
+    # Quality-control log.
     n_ok = cv_all[["cod_ibge", "tributo"]].drop_duplicates().shape[0]
     (cfg.forecasts_dir / "extended_log.txt").write_text(
         f"imputed: {log['imputed']}\ninterpolated: {log['interpolated']}\n"
@@ -250,15 +232,14 @@ def generalization_table(cfg: PipelineConfig) -> Path:
     for tributo in ["IPTU", "ISSQN"]:
         sub = med[med["tributo"] == tributo]
         n_series = sub["municipio_nome"].nunique()
-        # vencedor por serie
+        # Winner per series.
         wins = {m: 0 for m in MODEL_ORDER}
         best_vals = []
         for _, g in sub.groupby("municipio_nome"):
             w = g.loc[g["scaled_err"].idxmin()]
             wins[w["modelo"]] += 1
             best_vals.append(w["scaled_err"])
-        # MASE mediano do melhor modelo, e mediana geral por modelo
-        max_wins = max(wins.values())  # negrito no modelo com mais vitorias (inclui empates)
+        max_wins = max(wins.values())
         win_str = ", ".join(
             (f"\\textbf{{{MODEL_TEX[m]} {wins[m]}}}" if wins[m] == max_wins
              else f"{MODEL_TEX[m]} {wins[m]}")
@@ -315,7 +296,7 @@ def generalization_figure(cfg: PipelineConfig) -> Path:
 
 
 def run_all(cfg: PipelineConfig) -> list[Path]:
-    """Roda a generalizacao (se ainda nao houver cache) e gera tabela e figura."""
+    """Run the extended evaluation when needed and export summaries."""
     if not (cfg.forecasts_dir / "cv_extended.csv").exists():
         run_generalization(cfg)
     return [generalization_table(cfg), generalization_municipality_table(cfg),

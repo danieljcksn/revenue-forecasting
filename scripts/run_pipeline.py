@@ -1,22 +1,18 @@
-"""Driver da modelagem: validacao por origem movel das seis series x quatro modelos.
+"""Training driver for rolling-origin validation on the core series.
 
-Executa, para cada serie (municipio x tributo) e cada modelo parcimonioso
-(Naive Sazonal, ETS, SARIMA, Prophet), a validacao cruzada por origem movel
-descrita na Secao 4.7 do TCC, e cacheia o resultado consolidado em disco. As
-tabelas e figuras dos Capitulos 5 e 6 sao construidas a jusante a partir desse
-cache -- de modo que iterar no texto nao exige re-treinar nada.
+For each municipality-tax series and each core model (seasonal Naive, ETS,
+SARIMA, Prophet), this script runs rolling-origin validation and caches the
+long-format result. Downstream reporting scripts read this cache instead of
+retraining models.
 
 Saidas (em cfg.forecasts_dir):
   - cv_all.csv         : tabela longa (serie x modelo x origem x passo)
   - params_full.csv    : parametros do ajuste de cada modelo na serie completa
   - run_meta.json      : metadados da execucao (tempos, contagens)
 
-NOTA (reprodutibilidade): o portfolio reportado no TCC tem SEIS modelos (os quatro
-acima mais Theta e o Ensemble), com configuracoes corrigidas (AutoETS de taxonomia
-completa, SARIMA com D=1 forcado, Prophet mensal sem feriados e Fourier=6), montado
-pelos scripts de ``_precisao_run/`` e cacheado em ``cv_all.csv``. Este driver reproduz
-o NUCLEO de quatro modelos; consolidar o caminho de seis modelos como pipeline
-canonico e tarefa pendente (ver RUN_ORDER.md).
+Reproducibility note: the canonical cache used by the manuscript contains six
+predictors (the four above plus Theta and Ensemble). This script remains as the
+portable four-model driver for the package.
 
 Uso:
   python scripts/run_pipeline.py
@@ -50,11 +46,8 @@ from forecasting.eda import prepare_series
 warnings.filterwarnings("ignore")
 
 def run_models(cfg: PipelineConfig) -> list[Path]:
-    # Reprodutibilidade: fixa as seeds globais (numpy/random) ANTES de qualquer
-    # ajuste, com a mesma semente dos notebooks. Naive/ETS/SARIMA sao
-    # deterministas; isto torna EXPLICITA a semente sob a qual o Prophet e
-    # ajustado (Prophet usa otimizacao MAP, deterministica, sem RNG do numpy --
-    # ver nota de seeds no resumo / estudos/verificacao/rolling_seeds_out.txt).
+    # Fix global RNG state before any model fit. The classical models are
+    # deterministic, but this keeps stochastic dependencies explicit.
     M.set_global_seeds()
     series = prepare_series(cfg, impute=True)
     cv_frames: list[pd.DataFrame] = []
@@ -79,7 +72,7 @@ def run_models(cfg: PipelineConfig) -> list[Path]:
             cv["regime"] = cv["target_date"].apply(lambda d: M.covid_regime(d, cfg))
             cv_frames.append(cv)
 
-            # ajuste canonico na serie completa -> tabela de parametros
+            # Full-series fit used to export model parameters.
             full = M.fit_sarima(s) if model_name == "SARIMA" else fit_fn(s)
             param_rows.append({
                 "municipio": mun_key, "municipio_nome": mun_name,

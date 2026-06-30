@@ -1,11 +1,8 @@
-"""Tabelas de parametros e figuras por modelo (Secao 5.2 do TCC).
+"""Model-parameter tables and forecast diagnostic figures.
 
-Le o cache da validacao por origem movel (cv_all.csv) para as figuras de
-previsao versus realizado e ajusta cada modelo UMA vez na serie completa
-(barato) para as tabelas de parametros e os diagnosticos. Reflete o PORTFOLIO
-NOVO da reauditoria: ETS via statsforecast AutoETS (taxonomia completa), SARIMA
-em statsmodels com D=1 (ordens da janela inicial), Prophet mensal corrigido.
-Nao re-executa a validacao por origem movel.
+Reads the rolling-origin cache for forecast-vs-realized figures and performs
+full-series fits only when parameter tables need them. It does not rerun
+rolling-origin validation.
 """
 
 from __future__ import annotations
@@ -32,12 +29,8 @@ _MUN_ORDER = ["salvador", "camacari", "ilheus"]
 _MUN_LABEL = {"salvador": "Salvador", "camacari": "Camaçari", "ilheus": "Ilhéus"}
 _TAX_ORDER = ["IPTU", "ISSQN"]
 
-# Ordens SARIMA com D=1, selecionadas pelo auto_arima (test=KPSS, D forcado=1)
-# sobre a AMOSTRA COMPLETA -- coerente com o "ajuste na amostra completa" da
-# tabela (a validacao por origem movel congela as ordens da janela inicial, sem
-# vazamento; convencao identica a do monografia original). Fixadas aqui para nao
-# reintroduzir a dependencia de pmdarima no ambiente de build (statsforecast/numba
-# usa numpy 2.x, incompativel com o pmdarima compilado).
+# SARIMA orders used for full-sample diagnostic fits. They are fixed here so the
+# reporting build does not need to run pmdarima order selection.
 _SARIMA_D1_ORDERS = {
     ("salvador", "IPTU"):  ((1, 0, 0), (0, 1, 1, 12)),
     ("salvador", "ISSQN"): ((1, 1, 2), (0, 1, 1, 12)),
@@ -70,8 +63,8 @@ def ets_params_table(cfg: PipelineConfig) -> Path:
         md = m.model_
         spec = str(md["method"])  # ex.: "ETS(M,A,A)" / "ETS(A,Ad,M)"
         par = np.asarray(md["par"], dtype=float)
-        # statsforecast reserva [alpha, beta, gamma, phi] nas 4 primeiras
-        # posicoes; componente ausente vem como NaN (-> "--" no format_dec).
+        # statsforecast stores [alpha, beta, gamma, phi] in the first slots;
+        # missing components are NaN and become "--" in format_dec.
         alpha, beta, gamma, phi = par[0], par[1], par[2], par[3]
         aicc = float(md.get("aicc", float("nan")))
         rows.append(
@@ -166,14 +159,12 @@ def sarima_params_table(cfg: PipelineConfig) -> Path:
     return out
 
 
-# Estilo por modelo (nome, rotulo de exibicao, cor canonica), da FONTE UNICA
-# (config.MODEL_ORDER/MODEL_LABELS/MODEL_COLORS). Sem hex solto.
+# Model style tuples derived from config constants.
 _MODEL_STYLE = [(m, MODEL_LABELS[m], MODEL_COLORS[m]) for m in MODEL_ORDER]
 
 
 def forecasts_consolidated_figure(cfg: PipelineConfig) -> Path:
-    """fig_forecasts_formais.pdf: painel 3x2 (municipio x tributo) com a serie
-    realizada e as previsoes um-passo-a-frente dos seis modelos sobrepostas."""
+    """Generate the forecast-vs-realized panel for one-step forecasts."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
@@ -209,10 +200,7 @@ def forecasts_consolidated_figure(cfg: PipelineConfig) -> Path:
 
 
 def prophet_components_figure(cfg: PipelineConfig) -> Path:
-    """fig_prophet_componentes.pdf: decomposicao do Prophet CORRIGIDO (mensal:
-    Fourier 6, sem feriados de resolucao diaria, sazonalidade multiplicativa)
-    para Salvador-IPTU. Mostra a sazonalidade anual em MAGNITUDE REAL (R$ mi),
-    ao contrario da especificacao antiga, cuja componente sazonal era ~zero."""
+    """Generate Prophet trend and yearly-seasonality components."""
     import matplotlib.pyplot as plt
     from prophet import Prophet
 
@@ -232,8 +220,8 @@ def prophet_components_figure(cfg: PipelineConfig) -> Path:
     comps = [(c, lab) for c, lab in comps if c in fcst.columns]
     fig, axes = plt.subplots(len(comps), 1, figsize=(6.0, 4.2), sharex=True)
     for ax, (c, lab) in zip(np.atleast_1d(axes), comps):
-        # yearly multiplicativo vem como fator relativo; converte a R$ mi
-        # multiplicando pela tendencia para exibir a contribuicao em nivel.
+        # Multiplicative yearly seasonality is relative; multiply by trend to
+        # display its contribution in the original scale.
         vals = fcst[c]
         if c == "yearly" and m.seasonality_mode == "multiplicative":
             vals = fcst["yearly"] * fcst["trend"]
@@ -247,7 +235,7 @@ def prophet_components_figure(cfg: PipelineConfig) -> Path:
 
 
 def run_all(cfg: PipelineConfig) -> list[Path]:
-    """Gera as tabelas de parametros e as figuras por modelo (Secao 5.2)."""
+    """Generate model report tables and figures."""
     return [
         ets_params_table(cfg),
         sarima_params_table(cfg),

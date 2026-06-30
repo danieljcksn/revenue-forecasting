@@ -1,31 +1,22 @@
-"""Wrappers de treinamento dos modelos do TCC.
+"""Model fitting and forecasting wrappers.
 
 Cada modelo expoe interface uniforme:
     fit(train_series) -> FittedModel
     forecast(fitted_model, horizon) -> pd.Series
 
-Modelos cobertos (tres paradigmas, quatro especificacoes parcimoniosas):
+Core models covered by this module:
 - Baseline:             Naive Sazonal
 - Estatistico classico: ETS (Holt-Winters), SARIMA (auto_arima)
 - Estrutural:           Prophet
-
-O paradigma de aprendizado profundo esta fora do escopo deste trabalho:
-com 132 observacoes mensais por serie, modelos profundos tendem a
-sobreajustar e exigem volumes de dados muito superiores. Fica registrado
-apenas como direcao de extensao (ver Cap. 7 do TCC), sem implementacao
-neste pacote.
 
 Bibliotecas:
 - statsmodels (ETS, SARIMAX)
 - pmdarima (auto_arima)
 - prophet
 
-NOTA (reprodutibilidade): o portfolio reportado no TCC amplia este nucleo para
-SEIS previsores -- acrescenta o metodo Theta e um Ensemble (media simples de
-ETS/SARIMA/Theta/Prophet) -- e adota configuracoes corrigidas (AutoETS de
-taxonomia completa, SARIMA com D=1 forcado, Prophet mensal sem feriados e
-Fourier=6), produzidas via ``statsforecast`` pelos scripts de ``_precisao_run/``
-e cacheadas em ``cv_all.csv``. Este modulo implementa o nucleo de quatro modelos.
+The canonical forecast cache may contain additional predictors, such as Theta
+and Ensemble. This module keeps the portable four-model implementation used by
+the local training driver.
 """
 
 from __future__ import annotations
@@ -41,13 +32,12 @@ import pandas as pd
 
 from forecasting.config import PipelineConfig
 
-SEASON = 12  # periodicidade sazonal anual das series mensais
+SEASON = 12  # Annual seasonality of monthly series.
 
-# Parametros da validacao por origem movel (janela de treino expansiva).
-# INITIAL_WINDOW = 72: exige 6 anos minimos de treino (6*12) antes da 1a origem,
-#   o que da ~60 origens nas series de 132 meses sem treinar com pouca historia.
-# MAX_HORIZON = 12: horizonte maximo avaliado, 1 ano (alinhado a LOA do exercicio).
-# ROLLING_STEP = 1: a origem avanca um mes por vez (origem movel mensal).
+# Rolling-origin validation parameters for an expanding training window.
+# INITIAL_WINDOW = 72 keeps six full seasonal cycles in the first training set.
+# MAX_HORIZON = 12 stores a full one-year forecast path from each origin.
+# ROLLING_STEP = 1 advances the origin by one month.
 INITIAL_WINDOW = 72
 MAX_HORIZON = SEASON
 ROLLING_STEP = 1
@@ -64,7 +54,7 @@ def _forecast_index(last_train_date: pd.Timestamp, horizon: int) -> pd.DatetimeI
 
 @dataclass
 class FittedModel:
-    """Encapsula um modelo treinado + metadados para reportagem."""
+    """Trained model plus lightweight reporting metadata."""
     name: str
     fit_object: Any
     params: dict[str, Any]
@@ -86,11 +76,10 @@ def set_global_seeds(seed: int = 42) -> None:
 
 
 def fit_naive_seasonal(train: pd.Series, season: int = SEASON) -> FittedModel:
-    """Naive Sazonal: y_{T+h} = y_{T+h-s}.
+    """Seasonal Naive: y_{T+h} = y_{T+h-s}.
 
-    A previsao para cada mes futuro repete o valor do mesmo mes do ultimo
-    ciclo observado. Nao ha parametros a estimar; serve de regua (denominador
-    do MASE) e de piso que todo modelo "de verdade" precisa superar.
+    Each forecast repeats the value from the same month in the last observed
+    seasonal cycle. There are no fitted parameters.
     """
     t0 = time.perf_counter()
     y = np.asarray(train, dtype=float)
@@ -105,10 +94,8 @@ def fit_naive_seasonal(train: pd.Series, season: int = SEASON) -> FittedModel:
     )
 
 
-# Espaco de configuracoes ETS avaliadas por AICc a cada origem. Erro aditivo
-# (estavel para series ja deflacionadas); tendencia aditiva com/sem
-# amortecimento; sazonalidade aditiva ou multiplicativa (m=12). A selecao por
-# AICc a cada dobra reproduz o procedimento de `forecast::ets` (Hyndman).
+# ETS specifications evaluated by AICc at each origin. The grid keeps additive
+# error and varies trend, dampening, and seasonal form.
 _ETS_GRID = [
     dict(error="add", trend="add", damped_trend=False, seasonal="add"),
     dict(error="add", trend="add", damped_trend=True, seasonal="add"),
@@ -120,12 +107,10 @@ _ETS_GRID = [
 
 
 def fit_ets(train: pd.Series, season: int = SEASON) -> FittedModel:
-    """ETS (suavizacao exponencial / Holt-Winters) via statsmodels.
+    """ETS (exponential smoothing / Holt-Winters) via statsmodels.
 
-    Seleciona, entre um conjunto de especificacoes plausiveis (tendencia
-    amortecida ou nao; sazonalidade aditiva ou multiplicativa), aquela de
-    menor AICc -- criterio que penaliza complexidade e e apropriado para
-    amostras curtas. A re-selecao a cada dobra evita vazamento de informacao.
+    Selects the lowest-AICc specification from a small, explicit grid at each
+    rolling origin.
     """
     from statsmodels.tsa.exponential_smoothing.ets import ETSModel
 
@@ -148,8 +133,8 @@ def fit_ets(train: pd.Series, season: int = SEASON) -> FittedModel:
     if best is None:
         raise RuntimeError("nenhuma especificacao ETS convergiu para esta serie")
     aicc, res, spec = best
-    # Taxonomia ETS(E,T,S): erro sempre aditivo (A); tendencia aditiva (A),
-    # amortecida (Ad) ou ausente (N); sazonalidade aditiva (A) ou multiplicativa (M).
+    # ETS(E,T,S) taxonomy: additive error; optional trend/damping; additive or
+    # multiplicative seasonality.
     e = "A"
     t = "Ad" if spec["damped_trend"] else ("A" if spec["trend"] else "N")
     sea = "A" if spec["seasonal"] == "add" else "M"
@@ -167,9 +152,8 @@ def fit_ets(train: pd.Series, season: int = SEASON) -> FittedModel:
 def select_sarima_order(train: pd.Series, season: int = SEASON):
     """Seleciona as ordens (p,d,q)(P,D,Q) via pmdarima.auto_arima (stepwise).
 
-    A diferenciacao regular e sazonal segue os testes KPSS e OCSB; a busca
-    stepwise minimiza o AICc (Hyndman & Khandakar, 2008). Limites de ordem
-    modestos bastam para series mensais fiscais e mantem a busca barata.
+    Regular and seasonal differencing follow KPSS and OCSB tests; stepwise
+    search minimizes AICc under bounded orders.
     """
     import pmdarima as pm
 
@@ -189,9 +173,8 @@ def select_sarima_order(train: pd.Series, season: int = SEASON):
 def fit_sarima(train: pd.Series, season: int = SEASON, use_log: bool = True) -> FittedModel:
     """SARIMA com ordens selecionadas pelo auto_arima na propria serie.
 
-    Usado para a tabela de parametros (ajuste unico na amostra completa), na
-    mesma escala (log) da validacao por origem movel. Esta delega para
-    ``fit_sarimax_fixed`` apos a selecao das ordens.
+    Used for a single full-sample fit after order selection, then delegates to
+    ``fit_sarimax_fixed``.
     """
     base = np.log(np.asarray(train, dtype=float)) if use_log \
         else np.asarray(train, dtype=float)
@@ -208,16 +191,11 @@ def order_to_seasonal(seasonal_order):
 
 def fit_sarimax_fixed(train: pd.Series, order, seasonal_order,
                       use_log: bool = True) -> FittedModel:
-    """Ajusta um SARIMAX com ordens FIXAS (coeficientes reestimados no treino).
+    """Fit SARIMAX with fixed orders and coefficients estimated on the train set.
 
-    Quando ``use_log=True``, o modelo e ajustado sobre o logaritmo da serie.
-    Isso estabiliza a variancia das series de receita, cuja amplitude sazonal
-    cresce com o nivel (sazonalidade multiplicativa): no logaritmo, essa
-    estrutura torna-se aditiva e portanto compativel com o ARIMA, que e linear.
-    A previsao e devolvida na escala original por ``exp``; como o exponencial da
-    previsao no log corresponde a *mediana* da distribuicao log-normal (e nao a
-    media), ele e exatamente o preditor pontual otimo sob erro absoluto
-    (MAE/MASE) -- por isso NAO se aplica nenhuma correcao de vies de Jensen.
+    When ``use_log=True``, fitting happens on log revenue and forecasts return
+    to the original scale with ``exp``. The back-transformed point forecast is
+    the log-normal median, which is appropriate for absolute-error metrics.
     """
     from statsmodels.tsa.statespace.sarimax import SARIMAX
 
@@ -243,9 +221,7 @@ def fit_sarimax_fixed(train: pd.Series, order, seasonal_order,
 
 @dataclass
 class _SarimaFitter:
-    """``fit_fn`` do SARIMA na origem movel: carrega as ordens (p,d,q)(P,D,Q)
-    FIXADAS na janela inicial e, a cada origem, reestima apenas os coeficientes
-    (instancia chamavel). Substitui o antigo atributo monkeypatch em ``_fit``."""
+    """Callable SARIMA fitter with orders fixed after initial selection."""
     order: tuple
     seasonal_order: tuple
     use_log: bool = True
@@ -257,15 +233,10 @@ class _SarimaFitter:
 
 def make_sarima_fitter(initial_train: pd.Series, season: int = SEASON,
                        use_log: bool = True) -> "FitFn":
-    """Fabrica o ``fit_fn`` do SARIMA para a validacao por origem movel.
+    """Build the SARIMA ``fit_fn`` used by rolling-origin validation.
 
-    As ordens (p,d,q)(P,D,Q) sao selecionadas pelo ``auto_arima`` UMA UNICA VEZ,
-    sobre a janela inicial de treino -- que so contem dados ate a primeira origem,
-    portanto SEM VAZAMENTO de futuro. O fitter devolvido reestima, a cada origem,
-    apenas os COEFICIENTES do SARIMAX (mantendo as ordens fixas). Decisao
-    deliberada de custo x rigor: refazer a busca stepwise nas ~60 origens custaria
-    ordens de grandeza a mais sem mudar materialmente as ordens. A serie e
-    log-transformada (``use_log``) pela razao documentada em ``fit_sarimax_fixed``.
+    Orders are selected once on the initial training window. The returned
+    callable refits only SARIMAX coefficients at each later origin.
     """
     base = np.log(np.asarray(initial_train, dtype=float)) if use_log \
         else np.asarray(initial_train, dtype=float)
@@ -275,17 +246,10 @@ def make_sarima_fitter(initial_train: pd.Series, season: int = SEASON,
 
 
 def fit_prophet(train: pd.Series, season: int = SEASON) -> FittedModel:
-    """Prophet (decomposicao estrutural) com feriados nacionais.
+    """Prophet additive-structure model with Brazilian holidays.
 
-    Configuracao homogenea entre as series: apenas sazonalidade anual (as
-    series sao mensais, logo sem componentes semanal/diario), feriados do
-    Brasil via `add_country_holidays('BR')` e demais hiperparametros no default.
-    A sazonalidade e MULTIPLICATIVA: a amplitude do ciclo das receitas cresce
-    com o nivel da serie (sobretudo no IPTU), de modo que o modo aditivo
-    subestimaria sistematicamente os picos -- mesma razao pela qual o SARIMA
-    roda em log e o ETS admite componente sazonal multiplicativo. Sem tuning
-    fino de priors (changepoints/escala no default): a evidencia das
-    competicoes M indica que ele raramente compensa em series mensais curtas.
+    Uses yearly seasonality for monthly data, disables weekly/daily components,
+    includes Brazilian holidays, and keeps Prophet's default priors.
     """
     import logging
 
@@ -317,13 +281,11 @@ def fit_prophet(train: pd.Series, season: int = SEASON) -> FittedModel:
 
 
 def make_fitters(s: pd.Series) -> dict:
-    """Fabrica UNICA dos quatro fitters do TCC para a serie ``s``, na ordem
-    canonica (Naive, ETS, Prophet, SARIMA).
+    """Build the core fitters for a series in canonical order.
 
-    O SARIMA tem as ordens fixadas na janela inicial de 72 observacoes (sem
-    vazamento) e reestima apenas os coeficientes a cada origem. Usada tanto por
-    ``scripts/run_pipeline.py`` quanto por ``generalization.run_generalization``
-    -- antes cada driver reconstruia este mesmo dict a mao."""
+    SARIMA orders are fixed on the first 72 observations and coefficients are
+    refit at each origin.
+    """
     return {
         "Naive": fit_naive_seasonal,
         "ETS": fit_ets,
@@ -333,19 +295,12 @@ def make_fitters(s: pd.Series) -> dict:
 
 
 def covid_regime(target: pd.Timestamp, cfg: PipelineConfig) -> str:
-    """Regime temporal de uma data-alvo, segundo a janela COVID do cfg
-    (``cfg.covid_period``). Definicao UNICA, usada tanto pela coluna ``regime``
-    de ``cv_all.csv`` (run_pipeline) quanto pela nota de regime
-    (``evaluation.covid_regime_note``):
+    """Temporal regime for a target date, based on ``cfg.covid_period``:
 
       - ``"pre"``   : antes do inicio da pandemia (``< covid_period.start``)
       - ``"covid"`` : dentro da janela pandemica ``[start, end]``
       - ``"pos"``   : apos a janela (``> covid_period.end``)
-
-    Como ``covid_period.end = 2021-12-31``, vale a equivalencia EXATA
-    ``{pre, covid}`` == ano <= 2021 e ``{pos}`` == ano >= 2022 -- por isso a nota
-    do Cap. 5 (cauda da pandemia ``<=2021`` vs normalizacao ``2022--2025``)
-    deriva deste mesmo corte sem alterar nenhum numero."""
+    """
     start = pd.Timestamp(cfg.covid_period.start)
     end = pd.Timestamp(cfg.covid_period.end)
     if target < start:
@@ -359,7 +314,7 @@ def covid_regime(target: pd.Timestamp, cfg: PipelineConfig) -> str:
 
 
 def forecast(model: FittedModel, horizon: int) -> pd.Series:
-    """Gera previsao `horizon` passos a frente, indexada pelas datas futuras.
+    """Generate a `horizon`-step forecast indexed by future month starts.
 
     Dispatch por ``model.params['kind']`` (um caminho por paradigma): ``naive``
     repete o ultimo ciclo sazonal; ``ets`` e ``sarimax`` usam ``.forecast`` do
@@ -409,7 +364,7 @@ def rolling_origin_cv(
     step: int = ROLLING_STEP,
     season: int = SEASON,
 ) -> pd.DataFrame:
-    """Validacao cruzada por origem movel com janela de treino expansiva.
+    """Rolling-origin validation with an expanding training window.
 
     Para cada origem ``o`` (numero de meses no treino) de ``initial_window``
     ate ``len(series) - 1``, avancando de ``step`` em ``step``:
@@ -420,10 +375,9 @@ def rolling_origin_cv(
          (previsto, realizado) e a escala in-sample do Naive Sazonal daquele
          treino (denominador do MASE).
 
-    Como o modelo e ajustado uma unica vez por origem e o caminho completo e
-    guardado, a mesma execucao serve tanto as metricas por horizonte (filtrar
-    ``step == h``) quanto a agregacao anual do benchmark da prefeitura (somar
-    os 12 passos das origens que terminam em dezembro).
+    The full forecast path is kept for each origin. Metrics by horizon are
+    obtained by filtering ``step == h``; annual benchmarks sum the twelve steps
+    from December origins.
 
     Retorna um DataFrame longo com colunas: origin, train_end, step,
     target_date, y_true, y_pred, insample_scale.
@@ -459,12 +413,10 @@ def rolling_origin_cv(
 
 
 def run_all(cfg: PipelineConfig) -> list[Path]:
-    """Gera as tabelas de parametros e figuras por modelo (Secao 5.2).
+    """Generate model-parameter tables and diagnostic figures.
 
-    Le o cache da validacao por origem movel produzido por
-    ``scripts/run_pipeline.py`` (que faz o treino pesado uma unica vez) e
-    ajusta cada modelo na serie completa para as tabelas de parametros e os
-    diagnosticos. Nao re-executa a validacao por origem movel.
+    Reads the rolling-origin cache and performs full-series fits only for
+    parameter and diagnostic reporting.
     """
     from forecasting import model_reports
     return model_reports.run_all(cfg)

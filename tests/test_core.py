@@ -1,8 +1,7 @@
-"""Testes essenciais dos numeros que entram no TCC.
+"""Core tests for metrics, deflation, anomaly treatment, and aggregation.
 
-Cobrem os pontos onde um erro silencioso contaminaria tabelas e figuras:
-a escala in-sample do MASE, a invariancia do mes-base na deflacao, a
-imputacao da anomalia anual e a agregacao mensal -> anual.
+These tests protect invariants that would silently alter generated tables and
+figures if broken.
 """
 
 from __future__ import annotations
