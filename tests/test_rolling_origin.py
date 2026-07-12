@@ -1,9 +1,30 @@
-"""Synthetic tests for rolling-origin validation.
+"""Testes sinteticos do nucleo de validacao por origem movel.
 
-They cover leakage prevention, monthly-to-annual aggregation, expected fold
-counts, and NumPy seed reproducibility. The tests use only NumPy, pandas, and
-the deterministic seasonal Naive model so that validation logic is isolated
-from heavier model backends.
+Cobrem os dois riscos metodologicos mais expostos na defesa e que a suite
+atual (``tests/test_core.py``) nao tocava:
+
+ 1. **Ausencia de vazamento de futuro** em ``rolling_origin_cv``. Provado de
+    duas formas complementares e determinísticas:
+      - estruturalmente: em cada dobra o conjunto de treino e exatamente o
+        prefixo da serie ANTERIOR a origem (``train_end`` estritamente antes
+        de toda data-alvo);
+      - comportamentalmente: injetar um valor sentinela GIGANTE em todo o
+        futuro nao altera, bit a bit, as previsoes das dobras cujo treino
+        esta inteiramente no passado intacto -- ou seja, a previsao do passo
+        ``h`` usa somente dados ate a origem.
+ 2. **Agregacao mensal -> anual** (``aggregate_monthly_to_annual``): seleciona
+    apenas origens de dezembro e soma exatamente doze passos (anos completos).
+
+Reprodutibilidade: incluimos tambem um teste de ``set_global_seeds`` para
+documentar que ela fixa o RNG do numpy de forma determinística. Isso NAO
+cobre o Prophet/Stan: o Prophet usa otimizacao MAP (deterministica, sem RNG
+do numpy), entao a semente global e explicitada por higiene, nao por
+necessidade.
+
+Dependencias: apenas numpy + pandas. Usa-se o modelo Naive Sazonal, que e
+totalmente determinístico e nao importa bibliotecas pesadas (statsmodels,
+pmdarima, prophet), de modo que estes testes exercitam o ARNES da validacao
+por origem movel isoladamente do modelo.
 """
 
 from __future__ import annotations
@@ -15,7 +36,7 @@ import pytest
 from forecasting import models as M
 from forecasting.benchmarks import aggregate_monthly_to_annual
 
-# Same hyperparameters used by the rolling-origin pipeline.
+# Mesmos hiperparametros do pipeline real (run_pipeline.py / Secao 4.7 do TCC).
 INITIAL_WINDOW = 72
 MAX_HORIZON = 12
 STEP = 1
@@ -23,7 +44,7 @@ SEASON = 12
 
 
 def _deterministic_series(n: int = 96, start: str = "2015-01-01") -> pd.Series:
-    """Serie mensal determinÃ­stica, estritamente positiva, com sazonalidade.
+    """Serie mensal determinística, estritamente positiva, com sazonalidade.
 
     Sem componente aleatorio: nivel + tendencia linear + sazonalidade anual.
     O determinismo e essencial para as comparacoes bit a bit deste modulo.
@@ -119,10 +140,8 @@ def test_fold_counts_and_target_index_oracle():
     assert int((cv["step"] == 1).sum()) == n - INITIAL_WINDOW                 # 24
     assert int((cv["step"] == MAX_HORIZON).sum()) == n - INITIAL_WINDOW - MAX_HORIZON + 1  # 13
     # (d) passos por origem e total de linhas (soma de min(12, n-o)).
-    first_origin_rows = int((cv["origin"] == idx[INITIAL_WINDOW - 1]).sum())
-    penultimate_origin_rows = int((cv["origin"] == idx[n - 2]).sum())
-    assert first_origin_rows == MAX_HORIZON  # 1a origem: 12 passos
-    assert penultimate_origin_rows == 1  # ultima origem: 1 passo
+    assert int((cv["origin"] == idx[INITIAL_WINDOW - 1]).sum()) == MAX_HORIZON  # 1a origem: 12 passos
+    assert int((cv["origin"] == idx[n - 2]).sum()) == 1                        # ultima origem: 1 passo
     assert len(cv) == 13 * MAX_HORIZON + sum(range(1, MAX_HORIZON))            # 156 + 66 = 222
 
 
@@ -171,7 +190,7 @@ def test_future_sentinel_does_not_change_past_origin_forecasts():
 def test_aggregate_monthly_to_annual_december_origin_full_year():
     """So origens de dezembro com os 12 passos completos viram previsao anual."""
     rows: list[dict] = []
-    base = dict(municipio="ilheus", municipio_nome="IlhÃ©us", tributo="IPTU",
+    base = dict(municipio="ilheus", municipio_nome="Ilhéus", tributo="IPTU",
                 modelo="SARIMA", insample_scale=1.0)
 
     # (i) Dezembro/2020 COMPLETO (12 passos) -> ano-alvo 2021. Deve sobreviver.
@@ -217,7 +236,7 @@ def test_aggregate_monthly_to_annual_december_origin_full_year():
 
 
 def test_set_global_seeds_makes_numpy_reproducible():
-    """``set_global_seeds`` torna o RNG do numpy determinÃ­stico (mesma seed)."""
+    """``set_global_seeds`` torna o RNG do numpy determinístico (mesma seed)."""
     M.set_global_seeds(42)
     a = np.random.rand(8)
     M.set_global_seeds(42)
@@ -228,4 +247,3 @@ def test_set_global_seeds_makes_numpy_reproducible():
     M.set_global_seeds(123)
     c = np.random.rand(8)
     assert not np.array_equal(a, c)
-

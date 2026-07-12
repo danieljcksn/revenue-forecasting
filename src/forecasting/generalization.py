@@ -1,9 +1,19 @@
-"""Generalization run for larger Bahia municipalities.
+"""Analise de generalizacao: estende o estudo aos municipios baianos populosos.
 
-Applies the same rolling-origin pipeline to municipalities with more than
-100,000 inhabitants. Each series passes a quality screen before modeling:
-isolated anomalous years are imputed, while severely compromised series are
-excluded and logged.
+O nucleo do TCC examina em profundidade tres municipios de perfis economicos
+contrastantes (Salvador, Camacari, Ilheus). Esta camada acrescenta BREADTH:
+aplica o mesmo pipeline a todos os municipios baianos com mais de cem mil
+habitantes --- o mesmo recorte de Oliveira (2024) --- para verificar se os
+padroes observados nos tres casos se sustentam num conjunto mais amplo. O
+objetivo nao e detalhar cada serie, mas medir, no agregado: (i) com que
+frequencia cada modelo vence; (ii) se a previsibilidade IPTU > ISSQN persiste;
+(iii) a taxa de superacao da previsao da propria prefeitura.
+
+Tratamento de qualidade: cada serie passa por um detector de anos anomalos
+(total zero ou abaixo de 55% da media dos anos adjacentes). Anos isolados sao
+imputados por sazonal naive a partir dos exercicios vizinhos; series com mais
+de dois anos comprometidos sao excluidas e o fato e registrado, para nao
+contaminar o agregado.
 """
 
 from __future__ import annotations
@@ -15,6 +25,8 @@ import numpy as np
 import pandas as pd
 
 from forecasting.config import (
+    MODEL_COLORS,
+    MODEL_LABELS,
     MODEL_ORDER,
     MODEL_TEX,
     PipelineConfig,
@@ -23,7 +35,8 @@ from forecasting.config import (
 
 warnings.filterwarnings("ignore")
 
-# Bahia municipalities with more than 100,000 inhabitants (IBGE 2022).
+# Municipios baianos com mais de 100 mil habitantes (IBGE 2022) -- recorte de
+# Oliveira (2024). (cod_ibge, nome).
 POPULOUS_BA: list[tuple[int, str]] = [
     (2927408, "Salvador"), (2910800, "Feira de Santana"),
     (2933307, "Vitória da Conquista"), (2905701, "Camaçari"),
@@ -34,7 +47,8 @@ POPULOUS_BA: list[tuple[int, str]] = [
     (2928604, "Santo Antônio de Jesus"), (2932507, "Valença"), (2906501, "Candeias"),
 ]
 
-# --- Quality-control thresholds for extended series. ----------------------
+# --- Limiares do controle de qualidade das series estendidas (decisoes
+#     metodologicas; mesmos valores de antes, agora nomeados e justificados). ---
 _MIN_COBERTURA_MESES = 120  # >= 120 meses (10 anos) de cobertura p/ a serie entrar
 _ANO_COMPLETO_MESES = 10    # so anos com >= 10 meses contam no teste de queda de nivel
 _QUEDA_NIVEL_FRAC = 0.55    # ano "cai de nivel" se ficar < 55% da media dos vizinhos
@@ -61,10 +75,13 @@ def _detect_anomalous_years(s: pd.Series) -> list[int]:
     return bad
 
 
-def prepare_extended_series(cfg: PipelineConfig):
+def prepare_extended_series(cfg: PipelineConfig, municipios=None):
     """Series mensais deflacionadas dos municipios populosos, com tratamento
     automatico de anomalias. Retorna (series, log) onde ``series`` mapeia
-    (cod_ibge, nome, tributo) -> Series e ``log`` documenta o tratamento."""
+    (cod_ibge, nome, tributo) -> Series e ``log`` documenta o tratamento.
+
+    ``municipios`` (lista de pares ``(cod_ibge, nome)``) substitui o recorte
+    padrao POPULOUS_BA; e usado pela analise estadual em ``analysis/bahia``."""
     from forecasting.eda import deflate_by_ipca, impute_anomalous_year
     from forecasting.io import load_monthly_series, tributo_column
 
@@ -77,7 +94,7 @@ def prepare_extended_series(cfg: PipelineConfig):
     log = {"imputed": [], "interpolated": [], "excluded": [], "absent": []}
     present = set(defl["cod_ibge"].unique())
 
-    for cod, nome in POPULOUS_BA:
+    for cod, nome in (municipios if municipios is not None else POPULOUS_BA):
         if cod not in present:
             log["absent"].append(nome)
             continue
@@ -92,8 +109,11 @@ def prepare_extended_series(cfg: PipelineConfig):
             if s.notna().sum() < _MIN_COBERTURA_MESES:
                 log["excluded"].append((nome, tributo, "cobertura < 120 meses"))
                 continue
-            # Non-positive values are incompatible with log-based SARIMA and
-            # would make comparisons model-dependent.
+            # Valores mensais nao-positivos (estornos/retificacoes contabeis)
+            # sao incompativeis com a transformacao log do SARIMA: log(neg)=NaN,
+            # que o statsmodels absorve silenciosamente como dado faltante,
+            # contaminando as metricas de forma dependente da posicao. Excluem-se
+            # essas series de forma explicita e simetrica para os quatro modelos.
             if (s <= 0).any():
                 log["excluded"].append((nome, tributo, "valor mensal nao-positivo"))
                 continue
@@ -104,7 +124,8 @@ def prepare_extended_series(cfg: PipelineConfig):
             for yr in bad:
                 s = impute_anomalous_year(s, yr)
                 log["imputed"].append((nome, tributo, yr))
-            # Isolated gaps are interpolated; larger gaps exclude the series.
+            # lacunas isoladas (ate 2 meses consecutivos): interpolacao linear;
+            # gaps maiores tornam a serie inutilizavel -> exclui.
             n_nan = int(s.isna().sum())
             if n_nan:
                 s = s.interpolate(method="linear", limit=_INTERP_MAX_GAP, limit_area="inside")
@@ -130,8 +151,10 @@ def run_generalization(cfg: PipelineConfig) -> Path:
     log.setdefault("fit_failed", [])
     frames = []
     for (cod, nome, tributo), s in series.items():
-        # If any model fails on a series, discard that whole series so remaining
-        # comparisons use identical folds across models.
+        # Isola cada serie: uma falha de ajuste (modelo que diverge numa janela
+        # expandida e produz NaN/inf) e registrada e a serie e descartada
+        # inteira, para que toda serie remanescente compare os quatro modelos
+        # sob exatamente as mesmas dobras. Nao se contamina o agregado.
         try:
             fitters = M.make_fitters(s)
             series_frames = []
@@ -155,7 +178,7 @@ def run_generalization(cfg: PipelineConfig) -> Path:
     cv_all = pd.concat(frames, ignore_index=True)
     out = cfg.forecasts_dir / "cv_extended.csv"
     cv_all.to_csv(out, index=False, encoding="utf-8")
-    # Quality-control log.
+    # log de tratamento
     n_ok = cv_all[["cod_ibge", "tributo"]].drop_duplicates().shape[0]
     (cfg.forecasts_dir / "extended_log.txt").write_text(
         f"imputed: {log['imputed']}\ninterpolated: {log['interpolated']}\n"
@@ -190,7 +213,7 @@ def generalization_municipality_table(cfg: PipelineConfig) -> Path:
     def cell(nome: str, trib: str) -> str:
         g = med[(med["municipio_nome"] == nome) & (med["tributo"] == trib)]
         if g.empty:
-            return "---"
+            return "--"
         w = g.loc[g["scaled_err"].idxmin()]
         val = format_dec(w['scaled_err'], 2)
         return f"{MODEL_TEX[w['modelo']]} ({val})"
@@ -202,16 +225,17 @@ def generalization_municipality_table(cfg: PipelineConfig) -> Path:
             for nome in muns]
     tex = styled_table(
         gerado_por="generalization.generalization_municipality_table",
-        caption="Melhor modelo e seu MASE mediano em $h=12$ por munic\\'ipio "
-        "baiano com mais de cem mil habitantes, por tributo (entre par\\^enteses, "
-        "o MASE). ``---'' indica s\\'erie exclu\\'ida no controle de qualidade.",
+        caption="Melhor modelo por munic\\'ipio e tributo",
         label="tab:generalizacao-municipios",
         colspec="L L L",
         header=["Munic\\'ipio", "IPTU: melhor (MASE)", "ISSQN: melhor (MASE)"],
         rows=rows,
         fonte="Elabora\\c{c}\\~ao pr\\'opria.",
+        footnote=("Entre par\\^enteses, o MASE mediano em $h=12$. ``--'' indica "
+                  "s\\'erie exclu\\'ida no controle de qualidade."),
         stripe=True,
-        size="small",
+        size="footnotesize",
+        floating=False,
     )
     out = table_path(cfg, "tab_generalizacao_municipios")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -232,39 +256,42 @@ def generalization_table(cfg: PipelineConfig) -> Path:
     for tributo in ["IPTU", "ISSQN"]:
         sub = med[med["tributo"] == tributo]
         n_series = sub["municipio_nome"].nunique()
-        # Winner per series.
+        # vencedor por serie
         wins = {m: 0 for m in MODEL_ORDER}
         best_vals = []
         for _, g in sub.groupby("municipio_nome"):
             w = g.loc[g["scaled_err"].idxmin()]
             wins[w["modelo"]] += 1
             best_vals.append(w["scaled_err"])
-        max_wins = max(wins.values())
-        win_str = ", ".join(
-            (f"\\textbf{{{MODEL_TEX[m]} {wins[m]}}}" if wins[m] == max_wins
-             else f"{MODEL_TEX[m]} {wins[m]}")
-            for m in MODEL_ORDER if wins[m] > 0)
+        # MASE mediano do melhor modelo, e mediana geral por modelo
+        max_wins = max(wins.values())  # negrito no modelo com mais vitorias (inclui empates)
+        win_cells = [
+            f"\\textbf{{{wins[m]}}}" if wins[m] == max_wins and wins[m] > 0
+            else str(wins[m])
+            for m in MODEL_ORDER
+        ]
         med_best = np.median(best_vals)
         rows.append(
-            f"{tributo} & {n_series} & {win_str} & {format_dec(med_best, 2)} \\\\")
+            " & ".join([tributo, str(n_series), *win_cells, format_dec(med_best, 2)])
+            + " \\\\")
     from forecasting.config import styled_table
 
     tex = styled_table(
         gerado_por="generalization.generalization_table",
-        caption="Generaliza\\c{c}\\~ao aos munic\\'ipios baianos com mais de "
-        "cem mil habitantes: vit\\'orias por modelo (MASE mediano em $h=12$) e "
-        "MASE t\\'ipico do vencedor, por tributo.",
+        caption="Generaliza\\c{c}\\~ao aos munic\\'ipios populosos",
         label="tab:generalizacao",
-        colspec="l c L c",
-        header=["Tributo", "S\\'eries", "Vit\\'orias por modelo",
-                "MASE mediano do vencedor"],
+        # "Tributo", "$n$" e "MASE" em largura natural; as colunas de modelo
+        # dividem o restante (senao o cabecalho "Ensemble" negrito estoura).
+        colspec="l c C C C C C C c",
+        header=["Tributo", "$n$", *[MODEL_TEX[m] for m in MODEL_ORDER], "MASE"],
         rows=rows,
         fonte="Elabora\\c{c}\\~ao pr\\'opria.",
-        footnote="``Vit\\'orias'': n\\'umero de munic\\'ipios "
-        "em que cada modelo teve o menor MASE mediano em $h=12$; "
-        "em negrito, o modelo com mais vit\\'orias.",
+        footnote=("$n$ indica o n\\'umero de s\\'eries retidas no controle de qualidade. "
+                  "As colunas dos modelos contam as vit\\'orias por menor MASE mediano "
+                  "em $h=12$; em negrito, o maior total de cada linha (inclusive "
+                  "empates). A coluna MASE mostra a mediana dos vencedores."),
         stripe=True,
-        size="small",
+        size="footnotesize",
     )
     out = table_path(cfg, "tab_generalizacao")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -273,31 +300,159 @@ def generalization_table(cfg: PipelineConfig) -> Path:
 
 
 def generalization_figure(cfg: PipelineConfig) -> Path:
-    """fig_generalizacao.pdf: boxplot do MASE (h=12) por modelo no conjunto
-    estendido, separado por tributo, com a linha de referencia em MASE=1."""
+    """fig_generalizacao.pdf: MASE mediano (h=12) por modelo no conjunto
+    estendido, separado por tributo, com linha de referencia em MASE=1."""
     import matplotlib.pyplot as plt
 
-    from forecasting.plotting import model_boxplot, save_figure, setup_matplotlib_thesis
+    from forecasting.plotting import (
+        BAR_LABEL_SIZE,
+        BASELINE_GREY,
+        br_axis,
+        pixel_scale,
+        rounded_bar,
+        save_figure,
+        setup_matplotlib_thesis,
+        style_axis,
+    )
 
     setup_matplotlib_thesis()
     cv = _load_extended_cv(cfg)
     h12 = cv[cv["step"] == 12]
-    fig, axes = plt.subplots(1, 2, figsize=(6.3, 3.3), sharey=True)
+    med = (h12.groupby(["tributo", "municipio_nome", "modelo"])["scaled_err"]
+           .median().reset_index()
+           .groupby(["tributo", "modelo"])["scaled_err"].median().reset_index())
+    fig, axes = plt.subplots(2, 1, figsize=(6.0, 4.35), sharex=True, sharey=True)
+    ymax = max(1.15, float(med["scaled_err"].max()) * 1.18)
+    x = np.arange(len(MODEL_ORDER))
+    width = 0.62
     for ax, tributo in zip(axes, ["IPTU", "ISSQN"]):
-        data = [h12[(h12["tributo"] == tributo) & (h12["modelo"] == m)]["scaled_err"].to_numpy()
-                for m in MODEL_ORDER]
-        model_boxplot(ax, data, MODEL_ORDER)
+        vals = [
+            float(med[(med["tributo"] == tributo) & (med["modelo"] == m)]["scaled_err"].iloc[0])
+            for m in MODEL_ORDER
+        ]
+        ax.set_ylim(0, ymax)
+        ax.set_xlim(-0.65, len(MODEL_ORDER) - 0.35)
+        ax.axhline(1.0, color=BASELINE_GREY, lw=1.0, ls=(0, (5, 4)), zorder=1)
+        scale = pixel_scale(ax)
+        for xpos, val, model in zip(x, vals, MODEL_ORDER):
+            rounded_bar(ax, xpos - width / 2, 0, width, val,
+                        MODEL_COLORS[model], scale=scale)
+            ax.text(
+                xpos, val + ymax * 0.025, f"{val:.2f}".replace(".", ","),
+                ha="center", va="bottom", fontsize=BAR_LABEL_SIZE,
+                fontweight="semibold", color="#202124",
+            )
         ax.set_title(tributo)
-        if tributo == "IPTU":
-            ax.set_ylabel("MASE ($h = 12$)")
+        ax.set_ylabel("MASE mediano")
+        # Passo regular de 0,5: o locator automatico, arredondado a 1 casa,
+        # produzia a sequencia irregular 0,0 / 0,2 / 0,5 / 0,8 / 1,0.
+        br_axis(ax, "y", decimals=1, step=0.5)
+        style_axis(ax)
+    axes[-1].set_xticks(x, [MODEL_LABELS[m] for m in MODEL_ORDER])
+    axes[-1].tick_params(axis="x", length=0.0)
     out = save_figure(fig, "fig_generalizacao", cfg.figures_dir_abs)
     plt.close(fig)
     return out
 
 
+def generalization_prefeitura_figure(cfg: PipelineConfig) -> Path:
+    """Gera fig_confronto_ampliado.pdf (dumbbell, 31 series): erro anual medio
+    do ENSEMBLE contra o da PREFEITURA no conjunto ampliado, mesmo desenho da
+    fig_confronto_prefeitura para leitura continua entre as duas.
+
+    Reproduz a MESMA regra do texto (origens que terminam em dezembro, soma dos
+    doze passos, anos com previsao municipal disponivel) e imprime os win-rates
+    para conferencia com a prosa (canonicos P1: 155 confrontos, ex-post 70%,
+    Ensemble fixo 63%; Ensemble com erro medio menor em 24 das 31 series).
+    Series ordenadas pelo erro da prefeitura; conector azulado onde o Ensemble
+    vence. Cache-only."""
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    from forecasting.config import MUNITAX_BLUE
+    from forecasting.io import load_prefeitura_forecast
+    from forecasting.plotting import save_figure, setup_matplotlib_thesis, style_axis
+
+    setup_matplotlib_thesis()
+    cv = _load_extended_cv(cfg)
+    cv = cv.copy()
+    cv["origin"] = pd.to_datetime(cv["origin"])
+    dec = cv[(cv["origin"].dt.month == 12) & (cv["step"].between(1, 12))].copy()
+    dec["target_year"] = dec["origin"].dt.year + 1
+    g = dec.groupby(["cod_ibge", "tributo", "modelo", "target_year"]).agg(
+        pred=("y_pred", "sum"), real=("y_true", "sum"), n=("step", "count")).reset_index()
+    g = g[g["n"] == 12]
+    g["err"] = 100 * (g["pred"] - g["real"]).abs() / g["real"].abs()
+
+    pf = load_prefeitura_forecast(cfg).rename(columns={"year": "target_year"})
+    m = g.merge(pf[["cod_ibge", "tributo", "target_year", "erro_pct_prefeitura"]],
+                on=["cod_ibge", "tributo", "target_year"], how="inner")
+
+    # Conferencia com a prosa do par. 5.7 (nao altera a figura).
+    m["beat"] = m["err"] < m["erro_pct_prefeitura"]
+    n_conf = m[["cod_ibge", "tributo", "target_year"]].drop_duplicates().shape[0]
+    expost = 0
+    for (_c, _t), b in m.groupby(["cod_ibge", "tributo"]):
+        best = b.groupby("modelo")["err"].mean().idxmin()
+        expost += int(b[b["modelo"] == best]["beat"].sum())
+    ens_fix = int(m[m["modelo"] == "Ensemble"]["beat"].sum())
+    print(f"[conferencia] confrontos={n_conf}  ex-post={expost} "
+          f"({100*expost/n_conf:.0f}%)  Ensemble fixo={ens_fix} "
+          f"({100*ens_fix/n_conf:.0f}%)")
+
+    ens = m[m["modelo"] == "Ensemble"]
+    pts = ens.groupby(["cod_ibge", "tributo"]).agg(
+        modelo_err=("err", "mean"),
+        pref_err=("erro_pct_prefeitura", "mean")).reset_index()
+    wins = int((pts["modelo_err"] < pts["pref_err"]).sum())
+    print(f"[conferencia] series no grafico={len(pts)}; Ensemble com erro medio "
+          f"menor que a prefeitura em {wins} delas")
+
+    nomes = cv[["cod_ibge", "municipio_nome"]].drop_duplicates().set_index("cod_ibge")
+    pts["nome"] = pts["cod_ibge"].map(nomes["municipio_nome"])
+    pts["rotulo"] = pts["nome"] + " · " + pts["tributo"]
+    pts = pts.sort_values("pref_err").reset_index(drop=True)
+
+    pref_c = "#9AA0A6"
+    ens_c = MUNITAX_BLUE
+    fig, ax = plt.subplots(figsize=(6.0, 6.4))
+    ys = np.arange(len(pts))
+    for y, row in pts.iterrows():
+        p, e = float(row["pref_err"]), float(row["modelo_err"])
+        seg_c = "#CBE2FB" if e < p else "#E8EAED"
+        ax.plot([min(p, e), max(p, e)], [y, y], color=seg_c, lw=2.4,
+                solid_capstyle="round", zorder=1)
+        ax.scatter([p], [y], s=26, color=pref_c, zorder=3)
+        ax.scatter([e], [y], s=26, color=ens_c, zorder=4)
+    ax.set_yticks(ys, pts["rotulo"])
+    ax.tick_params(axis="y", labelsize=7.0, length=0.0)
+    ax.set_xlabel("Erro anual médio (%), 2021 a 2025")
+    ax.set_xlim(0, float(max(pts["pref_err"].max(), pts["modelo_err"].max())) * 1.06)
+    ax.set_ylim(-0.7, len(pts) - 0.3)
+    ax.grid(False)
+    ax.grid(True, axis="x", color="#E8EAED", lw=0.6)
+    ax.set_axisbelow(True)
+    style_axis(ax)
+    handles = [
+        Line2D([0], [0], marker="o", lw=0, markersize=6, color=pref_c,
+               label="Previsão da prefeitura (LOA)"),
+        Line2D([0], [0], marker="o", lw=0, markersize=6, color=ens_c,
+               label="Ensemble"),
+    ]
+    fig.legend(handles=handles, loc="outside upper center", ncol=2,
+               fontsize=7.7, frameon=False)
+    out = save_figure(fig, "fig_confronto_ampliado", cfg.figures_dir_abs)
+    plt.close(fig)
+    return out
+
+
 def run_all(cfg: PipelineConfig) -> list[Path]:
-    """Run the extended evaluation when needed and export summaries."""
+    """Gera as duas tabelas e as duas figuras vivas do conjunto ampliado.
+
+    ATENCAO: se cv_extended.csv sumir, o re-fit automatico usaria o nucleo de
+    QUATRO modelos de make_fitters, nao o portfolio canonico de seis gerado em
+    scripts de geracao do conjunto ampliado -- nunca apague o cache."""
     if not (cfg.forecasts_dir / "cv_extended.csv").exists():
         run_generalization(cfg)
     return [generalization_table(cfg), generalization_municipality_table(cfg),
-            generalization_figure(cfg)]
+            generalization_figure(cfg), generalization_prefeitura_figure(cfg)]

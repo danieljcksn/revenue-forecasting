@@ -1,8 +1,11 @@
-"""Exploratory analysis and series preparation.
+"""Analise exploratoria - gera os artefatos da Secao 5.1 do TCC.
 
 Cada funcao publica produz um artefato canonico (tabela .tex ou figura .pdf) e
-retorna o path final. The module also holds the canonical deflation and anomaly
-treatment used by downstream models.
+retorna o path final. As tres tabelas compartilham o helper interno
+``_write_table`` (estrutura ABNT ``\\begin{table}...\\fonte``); as figuras usam
+``plotting.setup_matplotlib_thesis``. Escopo: estacionariedade por ADF + KPSS
+(sem Phillips-Perron); estabilizacao de variancia por log (sem Box-Cox); sem
+ajuste de dias uteis (confundente conhecida, nao tratada).
 """
 
 from __future__ import annotations
@@ -15,7 +18,13 @@ import pandas as pd
 
 from forecasting.config import PipelineConfig, format_brl
 from forecasting.io import load_monthly_series, table_path, tributo_column
-from forecasting.plotting import save_figure, setup_matplotlib_thesis
+from forecasting.plotting import (
+    MUNITAX_BLUE,
+    REALIZED_INK,
+    save_figure,
+    setup_matplotlib_thesis,
+    style_axis,
+)
 
 # Colunas identificadoras do monthly_revenue.csv (nao sao valores a deflacionar).
 _ID_COLS = {"cod_ibge", "entity_name", "uf", "year", "month", "month_name", "date"}
@@ -65,8 +74,8 @@ def prepare_series(
          substituido pela media do mesmo mes nos anos vizinhos (Naive sazonal).
 
     Use ``impute=False`` quando a anomalia deve permanecer VISIVEL
-    (``time_series_panel``, ``coverage_table``); ``impute=True`` (default) para a
-    modelagem e a ``stationarity_table``. Retorna ``dict[(mun_key, tributo) -> Series]``.
+    (``time_series_panel``); ``impute=True`` (default) para a modelagem e a
+    ``stationarity_table``. Retorna ``dict[(mun_key, tributo) -> Series]``.
     """
     raw = load_monthly_series(cfg)
     defl = deflate_by_ipca(raw, base_month=cfg.ipca_base_month)
@@ -243,7 +252,7 @@ def _write_table(
     cfg: PipelineConfig, *, name: str, gerado_por: str, caption: str, label: str,
     colspec: str, header, rows: list[str], fonte: str,
     footnote: str | None = None, tabularx: bool = True,
-    stripe: bool = True, size: str = "small",
+    stripe: bool = True, size: str = "small", floating: bool = True,
 ) -> Path:
     """Delegado fino para a casa de estilo unica (``config.styled_table``):
     tabela de largura total, cabecalho azul-marca munitax e zebra discreta.
@@ -258,7 +267,7 @@ def _write_table(
     tex = styled_table(
         gerado_por=gerado_por, caption=caption, label=label, colspec=colspec,
         header=header, rows=rows, fonte=fonte, footnote=footnote,
-        stripe=stripe, size=size)
+        stripe=stripe, size=size, floating=floating)
     out = table_path(cfg, name)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(tex, encoding="utf-8")
@@ -269,7 +278,7 @@ def descriptive_stats_table(
     cfg: PipelineConfig,
     monthly_df: pd.DataFrame,
 ) -> Path:
-    """Gera tab_descritivas.tex (Tabela 5.1.1).
+    """Gera tab_descritivas.tex.
 
     `monthly_df` deve estar JA DEFLACIONADO (passe o resultado de
     `deflate_by_ipca`). Itera (municipio, tributo) de `cfg`, calcula n, media,
@@ -291,8 +300,7 @@ def descriptive_stats_table(
             cv = (s.std() / mean * 100.0) if mean else float("nan")
             rows.append(
                 f"{mun.name} & {tax} & {n} & {format_brl(mean, 1)} & {format_brl(s.median(), 1)} "
-                f"& {format_brl(s.std(), 1)} & {format_brl(cv, 1)} "
-                f"& {format_brl(s.min(), 1)}--{format_brl(s.max(), 1)} \\\\"
+                f"& {format_brl(s.std(), 1)} & {format_brl(cv, 1)} & {format_brl(s.min(), 1)}--{format_brl(s.max(), 1)} \\\\"
             )
         if i < len(muns) - 1:
             rows.append(r"\addlinespace")
@@ -303,14 +311,20 @@ def descriptive_stats_table(
         cfg,
         name="tab_descritivas",
         gerado_por="eda.descriptive_stats_table",
-        caption=(f"Estat\\'isticas descritivas das s\\'eries mensais "
-                 f"(valores reais, base IPCA {base_label}, R\\$ milh\\~oes)"),
+        caption="Estat\\'isticas descritivas das s\\'eries mensais",
         label="tab:descritivas",
-        colspec="l l C C C C C c",
+        # Colunas monetarias alinhadas a DIREITA: magnitudes variam (2,5 a
+        # 138,9) e o alinhamento pela borda direita aproxima as virgulas.
+        # "$n$" em largura natural (c) libera espaco para a faixa Min.--Max.
+        # nao quebrar em duas linhas.
+        colspec="l l c R R R R R",
         size="footnotesize",
         header=("Munic\\'ipio & Tributo & $n$ & M\\'edia & Mediana & DP & CV (\\%) "
                 "& M\\'in.--M\\'ax. \\\\"),
         rows=rows,
+        footnote=(f"Valores em R\\$ milh\\~oes, deflacionados pelo IPCA, "
+                  f"base {base_label}. DP = desvio-padr\\~ao; CV = coeficiente "
+                  "de varia\\c{c}\\~ao."),
         fonte=("Elabora\\c{c}\\~ao pr\\'opria a partir do RREO-Anexo 03 (SICONFI), "
                "deflacionado pelo IPCA (BCB/SGS 433)."),
     )
@@ -342,7 +356,7 @@ def stationarity_table(cfg: PipelineConfig, monthly_df: pd.DataFrame | None = No
     (sugerida pelo teste OCSB), e as forcas de tendencia e sazonalidade
     extraidas da decomposicao STL. A combinacao dos dois testes evita o
     diagnostico de um so lado e alimenta diretamente a busca do ``auto_arima``
-    before modeling.
+    (Cap. 4, seção de implementação do SARIMA).
     """
     from pmdarima.arima.utils import ndiffs, nsdiffs
     from statsmodels.tsa.stattools import adfuller, kpss
@@ -364,9 +378,13 @@ def stationarity_table(cfg: PipelineConfig, monthly_df: pd.DataFrame | None = No
             # statsmodels limita o p-valor do KPSS a [0,01; 0,10] (tabela do teste).
             kpss_txt = ("$<$0,01" if kpss_p <= 0.01
                         else "$>$0,10" if kpss_p >= 0.10 else format_brl(kpss_p, 3))
+            # Estatisticas em convencao BR (virgula) e sinal negativo como
+            # menos matematico ($-$), nao hifen de texto.
+            adf_txt = format_brl(adf_stat, 2).replace("-", "$-$")
+            kpss_stat_txt = format_brl(kpss_stat, 2).replace("-", "$-$")
             rows.append(
-                f"{mun.name} & {tributo} & {adf_stat:.2f} & {format_brl(adf_p, 3)} "
-                f"& {kpss_stat:.2f} & {kpss_txt} "
+                f"{mun.name} & {tributo} & {adf_txt} & {format_brl(adf_p, 3)} "
+                f"& {kpss_stat_txt} & {kpss_txt} "
                 f"& {d} & {D} & {format_brl(f_t, 2)} & {format_brl(f_s, 2)} \\\\"
             )
         if i < len(muns) - 1:
@@ -375,9 +393,7 @@ def stationarity_table(cfg: PipelineConfig, monthly_df: pd.DataFrame | None = No
         cfg,
         name="tab_estacionariedade",
         gerado_por="eda.stationarity_table",
-        caption=("Testes de estacionariedade (ADF e KPSS, em n\\'ivel) e "
-                 "diagn\\'ostico de diferencia\\c{c}\\~ao e for\\c{c}a dos componentes "
-                 "(STL) por s\\'erie."),
+        caption="Estacionariedade e componentes por s\\'erie",
         label="tab:estacionariedade",
         colspec="l l C C C C C C C C",
         size="footnotesize",
@@ -387,69 +403,10 @@ def stationarity_table(cfg: PipelineConfig, monthly_df: pd.DataFrame | None = No
         footnote=("ADF testa $H_0$: raiz unit\\'aria "
                   "(s\\'erie n\\~ao estacion\\'aria); KPSS testa $H_0$: estacionariedade. "
                   "$d$/$D$: ordens de diferencia\\c{c}\\~ao regular/sazonal sugeridas "
-                  "(KPSS/OCSB), insumo do \\texttt{auto\\_arima}. $F_T$/$F_S$: for\\c{c}a "
-                  "de tend\\^encia/sazonalidade (STL, Wang et al., 2006)."),
+                  "(KPSS/OCSB), insumo do \\texttt{auto\\_arima}. $F_T$/$F_S$: for\\c{c}as "
+                  "de tend\\^encia e de sazonalidade (STL, Wang et al., 2006)."),
         fonte="Elabora\\c{c}\\~ao pr\\'opria.",
-    )
-
-
-def coverage_table(cfg: PipelineConfig, collection_report: dict | None = None) -> Path:
-    """Gera tab_cobertura_dados.tex: cobertura CONJUNTA da serie mensal
-    (RREO-Anexo 03) e da projecao anual da prefeitura, por (municipio, tributo).
-
-    Consolida o que antes eram duas tabelas redundantes (ambas atestavam
-    cobertura completa). Conta meses presentes/ausentes direto do
-    ``monthly_revenue.csv`` e exercicios com previsao da prefeitura direto do
-    ``prefeitura_forecast.csv`` -- nao depende de modelagem. A queda atipica do
-    ISSQN de Camacari em 2016 nao e lacuna (os doze meses existem), e sim
-    n\\'ivel deslocado, tratado no pre-processamento.
-    """
-    from forecasting.io import load_prefeitura_forecast
-
-    series = prepare_series(cfg, impute=False)
-    # Meses esperados = tamanho da janela amostral do cfg (jan/2015 a dez/2025 = 132),
-    # derivado em vez de cravado para acompanhar cfg.sample_window automaticamente.
-    expected = len(pd.period_range(cfg.sample_window.start, cfg.sample_window.end, freq="M"))
-    try:
-        pf = load_prefeitura_forecast(cfg)
-        pf_years = pf.groupby(["cod_ibge", "tributo"])["year"].nunique().to_dict()
-    except Exception:  # noqa: BLE001 -- ausencia do arquivo nao deve quebrar a EDA
-        pf_years = {}
-    rows: list[str] = []
-    muns = list(cfg.municipalities.items())
-    for i, (key, mun) in enumerate(muns):
-        for tributo in cfg.tributos:
-            s = series[(key, tributo)]
-            present = int(s.notna().sum())
-            gaps = expected - present
-            anos_pf = pf_years.get((mun.cod_ibge, tributo), "--")
-            obs = (r"queda at\'ipica em 2016 (\S\ref{subsec:dados-ausentes})"
-                   if (key, tributo) == ("camacari", "ISSQN") else "---")
-            rows.append(
-                f"{mun.name} & {tributo} & {present} & {gaps} & {anos_pf} & {obs} \\\\"
-            )
-        if i < len(muns) - 1:
-            rows.append(r"\addlinespace")
-    return _write_table(
-        cfg,
-        name="tab_cobertura_dados",
-        gerado_por="eda.coverage_table",
-        caption=("Cobertura das s\\'eries, por munic\\'ipio e tributo: meses da "
-                 "s\\'erie mensal coletada (RREO-Anexo 03) e exerc\\'icios com previs\\~ao "
-                 "atualizada da prefeitura, no per\\'iodo de 2015 a 2025."),
-        label="tab:cobertura-dados",
-        # footnotesize + colunas numericas naturais (c): os cabecalhos longos
-        # "Meses presentes"/"Anos com previsao" cabem em UMA linha; so a nota
-        # descritiva longa em "Observacoes" (L) quebra -- em 2 linhas limpas.
-        colspec="l l c c c L",
-        header=("Munic\\'ipio & Tributo & Meses presentes & Lacunas & Anos com previs\\~ao "
-                "& Observa\\c{c}\\~oes \\\\"),
-        rows=rows,
-        size="footnotesize",
-        footnote=(f"Meses esperados: {expected} (jan/2015 a dez/2025). A "
-                  "previs\\~ao da prefeitura prov\\'em da ``Previs\\~ao Atualizada'' do "
-                  "6\\textsuperscript{o} bimestre do RREO-Anexo 03."),
-        fonte="Elabora\\c{c}\\~ao pr\\'opria a partir do RREO-Anexo 03 (SICONFI).",
+        floating=False,
     )
 
 
@@ -470,49 +427,46 @@ def time_series_panel(cfg: PipelineConfig, monthly_df: pd.DataFrame | None = Non
 
     setup_matplotlib_thesis()
     series = prepare_series(cfg, impute=False)
-    fig, axes = plt.subplots(3, 2, figsize=(6.2, 6.6), sharex=True)
+    fig, axes = plt.subplots(3, 2, figsize=(6.0, 6.4), sharex=True)
     for r, key in enumerate(_MUN_ORDER):
         for c, tributo in enumerate(_TAX_ORDER):
             ax = axes[r, c]
             s = series[(key, tributo)] / 1e6
-            ax.plot(s.index, s.to_numpy(), color="#45413A", lw=0.9)
+            ax.plot(s.index, s.to_numpy(), color=REALIZED_INK, lw=1.0)
+            ax.margins(x=0.02, y=0.08)
+            style_axis(ax)
             if r == 0:
                 ax.set_title(tributo)
             if c == 0:
-                ax.set_ylabel(f"{_MUN_LABEL[key]}\nR\\$ mi", fontsize=8)
+                # Mesmo rotulo de unidade da figura de previsoes (por extenso).
+                ax.set_ylabel(f"{_MUN_LABEL[key]}\n(R\\$ milhões)", fontsize=8.0)
+    fig.align_ylabels(axes[:, 0])
     out = save_figure(fig, "fig_serie_temporal", cfg.figures_dir_abs)
     plt.close(fig)
     return out
 
 
-def seasonal_subseries_panel(cfg: PipelineConfig, monthly_df: pd.DataFrame | None = None) -> Path:
-    """Gera fig_subseries_sazonais.pdf (painel 3x2).
+def log_transform_figure(cfg: PipelineConfig) -> Path:
+    """Gera fig_transformacao_log.pdf: a serie em nivel e em logaritmo, lado a
+    lado (IPTU de Camacari, a de amplitude sazonal mais crescente).
 
-    Para cada serie, sobrepoe as trajetorias anuais mes a mes (jan..dez) e a
-    media de cada mes, tornando visivel a concentracao do IPTU no primeiro
-    trimestre frente ao fluxo mais distribuido do ISSQN.
-    """
+    Torna VISIVEL por que o SARIMA e ajustado em log: no nivel, os picos
+    crescem com a serie (estrutura multiplicativa); no logaritmo, a amplitude
+    do ciclo fica aproximadamente constante (estrutura aditiva, compativel com
+    o ARIMA linear). So le os dados crus e plota."""
     import matplotlib.pyplot as plt
 
     setup_matplotlib_thesis()
-    series = prepare_series(cfg, impute=True)
-    fig, axes = plt.subplots(3, 2, figsize=(6.2, 6.6))
-    for r, key in enumerate(_MUN_ORDER):
-        for c, tributo in enumerate(_TAX_ORDER):
-            ax = axes[r, c]
-            s = series[(key, tributo)] / 1e6
-            piv = pd.DataFrame({"y": s.to_numpy(), "m": s.index.month,
-                                "yr": s.index.year}).pivot(index="m", columns="yr", values="y")
-            for yr in piv.columns:
-                ax.plot(piv.index, piv[yr].to_numpy(), color="0.7", lw=0.5)
-            ax.plot(piv.index, piv.mean(axis=1).to_numpy(), color="#D55E00", lw=1.6)
-            ax.set_xticks([1, 4, 7, 10])
-            ax.set_xticklabels(["J", "A", "J", "O"])
-            if r == 0:
-                ax.set_title(tributo)
-            if c == 0:
-                ax.set_ylabel(f"{_MUN_LABEL[key]}\nR\\$ mi", fontsize=8)
-    out = save_figure(fig, "fig_subseries_sazonais", cfg.figures_dir_abs)
+    s = prepare_series(cfg, impute=True)[("camacari", "IPTU")] / 1e6
+    fig, axes = plt.subplots(1, 2, figsize=(6.0, 2.35), sharex=True)
+    axes[0].plot(s.index, s.to_numpy(), color=REALIZED_INK, lw=0.9)
+    axes[0].set_title("Nível (R$ milhões)")
+    axes[1].plot(s.index, np.log(s.to_numpy()), color=REALIZED_INK, lw=0.9)
+    axes[1].set_title("Logaritmo do nível")
+    for ax in axes:
+        ax.margins(x=0.02, y=0.08)
+        style_axis(ax)
+    out = save_figure(fig, "fig_transformacao_log", cfg.figures_dir_abs)
     plt.close(fig)
     return out
 
@@ -538,7 +492,7 @@ def stl_decomposition_panel(cfg: PipelineConfig, monthly_df: pd.DataFrame | None
         comps = [s, res.trend, res.seasonal, res.resid]
         for r, (name, comp) in enumerate(zip(comp_names, comps)):
             ax = axes[r, c]
-            ax.plot(s.index, np.asarray(comp), color="#45413A", lw=0.8)
+            ax.plot(s.index, np.asarray(comp), color=REALIZED_INK, lw=0.85)
             if r == 0:
                 ax.set_title(f"{_MUN_LABEL[key]} · {tributo}")
             if c == 0:
@@ -548,59 +502,22 @@ def stl_decomposition_panel(cfg: PipelineConfig, monthly_df: pd.DataFrame | None
     return out
 
 
-def acf_pacf_panel(cfg: PipelineConfig, monthly_df: pd.DataFrame | None = None) -> Path:
-    """Gera fig_acf_pacf.pdf (ACF e PACF das seis series).
-
-    Aplica uma diferenca regular e uma sazonal (lag 12) antes de estimar as
-    funcoes de autocorrelacao, expondo a estrutura que orienta a escolha das
-    ordens (p,q)(P,Q) do SARIMA.
-    """
-    import matplotlib.pyplot as plt
-    from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-
-    setup_matplotlib_thesis()
-    series = prepare_series(cfg, impute=True)
-    keys = [(k, t) for k in _MUN_ORDER for t in _TAX_ORDER]
-    fig, axes = plt.subplots(6, 2, figsize=(6.3, 8.4), sharex=True)
-    for r, (key, tributo) in enumerate(keys):
-        s = series[(key, tributo)]
-        d = s.diff().diff(12).dropna()
-        # zero=False: omite a defasagem 0 (sempre 1), que comprime a escala
-        plot_acf(d, ax=axes[r, 0], lags=24, title="", zero=False,
-                 vlines_kwargs={"colors": "#45413A"})
-        plot_pacf(d, ax=axes[r, 1], lags=24, title="", method="ywm", zero=False,
-                  vlines_kwargs={"colors": "#45413A"})
-        for c in (0, 1):
-            for coll in axes[r, c].collections:
-                coll.set_facecolor("#45413A")
-                coll.set_edgecolor("#45413A")
-        axes[r, 0].set_ylabel(f"{_MUN_LABEL[key][:3]}.-{tributo}")
-        if r == 0:
-            axes[r, 0].set_title("ACF")
-            axes[r, 1].set_title("PACF")
-        if r == len(keys) - 1:
-            axes[r, 0].set_xlabel("Defasagem")
-            axes[r, 1].set_xlabel("Defasagem")
-    out = save_figure(fig, "fig_acf_pacf", cfg.figures_dir_abs)
-    plt.close(fig)
-    return out
-
-
 def run_all(cfg: PipelineConfig) -> list[Path]:
-    """Executa todas as funcoes de geracao de artefatos da EDA.
+    """Executa as funcoes de geracao de artefatos da EDA usados no documento.
 
     Regenera a tabela descritiva (sobre a serie deflacionada como coletada), a
-    tabela de cobertura, a tabela de estacionariedade e as quatro figuras de
-    diagnostico. Retorna a lista de paths gerados.
+    triagem de atipicos, a tabela de estacionariedade e as duas figuras vivas
+    (painel de series e transformacao log). A decomposicao STL nao entra mais no
+    documento: suas forcas de tendencia e sazonalidade vivem na tabela de
+    estacionariedade (colunas F_T/F_S), que ``stl_decomposition_panel`` seguiria
+    duplicando graficamente.
     """
     raw_defl = deflate_by_ipca(load_monthly_series(cfg), base_month=cfg.ipca_base_month)
     paths = [
         descriptive_stats_table(cfg, raw_defl),
-        coverage_table(cfg),
         outlier_screen(cfg),
         stationarity_table(cfg),
         time_series_panel(cfg),
-        stl_decomposition_panel(cfg),
-        acf_pacf_panel(cfg),
+        log_transform_figure(cfg),
     ]
     return paths

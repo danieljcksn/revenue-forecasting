@@ -1,7 +1,15 @@
-"""Error metrics, model rankings, and evaluation figures.
+"""Metricas de erro e ranque inter-municipal.
 
-Computes MAE, MAPE, and MASE from the rolling-origin cache and exports summary
-tables plus comparison figures.
+Gera artefatos das Secoes 5.3 e 5.4 e da Discussao do TCC. Escopo enxuto:
+- Pontuais: MAE, MAPE, MASE
+- Tabela: tab_metricas_comparacao (desempenho consolidado por horizonte)
+- Figuras: fig_mase_heatmap, fig_horizonte_curva, fig_naive_por_ano
+- Nota de proveniencia: covid_regime.txt
+
+Decisao deliberada: ficamos com tres metricas complementares e ranking
+visual, sem teste de Diebold-Mariano. Para um TCC com 6 series e poucas
+dobras, diferencas de MASE > 10% ja sao narrativamente robustas; o teste
+DM-HLN seria custo de defesa elevado para ganho informativo modesto.
 """
 
 from __future__ import annotations
@@ -93,7 +101,7 @@ def mase(
     return mae(y_true, y_pred) / scale
 
 
-# ---------- Generated artifacts -----------------------------------------
+# ---------- Geracao de artefatos para o TCC ------------------------------
 
 
 # ---------- Camada analitica (le o cache da validacao por origem movel) ---
@@ -103,7 +111,7 @@ def load_cv(cfg: PipelineConfig) -> pd.DataFrame:
     path = cfg.forecasts_dir / "cv_all.csv"
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} nao encontrado. Rode antes: python scripts/run_pipeline.py"
+            f"{path} nao encontrado (cache canonico versionado; ver RUN_ORDER.md)"
         )
     cv = pd.read_csv(path, parse_dates=["origin", "train_end", "target_date"])
     cv["abs_err"] = (cv["y_true"] - cv["y_pred"]).abs()
@@ -166,29 +174,29 @@ def metrics_table(cfg: PipelineConfig) -> Path:
             iqr_cell = format_dec(iqr[m], 2)
             mape_cell = format_dec(mape_med[m], 1)
             name = MODEL_TEX[m]
-            # Negrito na melhor mediana do horizonte, incluindo empates ao display.
+            # Negrito SO na melhor mediana do horizonte (o valor ranqueado, fiel
+            # a Nota); o nome do modelo permanece em peso regular, sem excesso.
             if med_cell == best_med_disp:
-                name = f"\\textbf{{{name}}}"
                 med_cell = f"\\textbf{{{med_cell}}}"
             rows_tex.append(
                 f"\\quad {name} & {int(n[m])} & {med_cell}~{extra} & {iqr_cell} "
-                f"& {mape_cell}\\,\\% \\\\")
+                f"& {mape_cell} \\\\")
         if h == 1:
             rows_tex.append(r"\addlinespace")
     from forecasting.config import styled_table
     tex = styled_table(
         gerado_por="evaluation.metrics_table",
-        caption=("Desempenho preditivo consolidado por horizonte: MASE "
-                 "(mediana, com a m\\'edia entre par\\^enteses) e MAPE (mediana) das "
-                 "dobras da origem m\\'ovel, agregando as seis s\\'eries."),
+        caption="Desempenho consolidado por horizonte",
         label="tab:metricas-comparacao",
         colspec="l C C C C",
-        header=["Modelo", "Dobras", "MASE (mediana)", "IQR", "MAPE"],
+        header=["Modelo", "Dobras", "MASE", "IQR", "MAPE (\\%)"],
         rows=rows_tex,
-        footnote=("MASE $<1$: desempenho superior ao \\emph{baseline} "
-                  "Na\\\"ive sazonal. Mediana adotada por robustez \\`a assimetria "
-                  "do erro; IQR = amplitude interquartil. Negrito: melhor mediana "
-                  "do horizonte."),
+        footnote=("Desempenho agregado das seis s\\'eries do n\\'ucleo (tr\\^es "
+                  "munic\\'ipios $\\times$ dois tributos), consolidando todas as "
+                  "dobras da valida\\c{c}\\~ao por origem m\\'ovel de cada horizonte "
+                  "(coluna Dobras). Nas c\\'elulas de MASE, a mediana das dobras, "
+                  "com a m\\'edia entre par\\^enteses; IQR = amplitude interquartil. "
+                  "Negrito: melhor mediana do horizonte."),
         fonte="Elabora\\c{c}\\~ao pr\\'opria.",
         stripe=False,
         size="footnotesize",
@@ -199,136 +207,13 @@ def metrics_table(cfg: PipelineConfig) -> Path:
     return out
 
 
-def metrics_by_series_table(cfg: PipelineConfig) -> Path:
-    """Gera tab_metricas_por_serie.tex (Apendice): MAE (R$ mi), MAPE e MASE
-    por serie, modelo e horizonte. Da o MAE em reais, dependente de escala,
-    que a tabela consolidada omite."""
-    from forecasting.io import table_path
-
-    cv = load_cv(cfg)
-    summ = fold_metrics(cv[cv["step"].isin([1, 12])],
-                        ["municipio_nome", "tributo", "modelo", "step"])
-    rows: list[str] = []
-    keys = [(name, t) for _k, name, t in series_keys(cfg)]
-    for i, (mun, trib) in enumerate(keys):
-        block = summ[(summ["municipio_nome"] == mun) & (summ["tributo"] == trib)]
-        first = True
-        for m in MODEL_ORDER:
-            for h in (1, 12):
-                r = block[(block["modelo"] == m) & (block["step"] == h)]
-                if r.empty:
-                    continue
-                r = r.iloc[0]
-                head = f"{mun} {trib}" if first else ""
-                first = False
-                mae_mi = format_dec(r['mae'] / 1e6, 2)
-                mape = format_dec(r['mape'], 1)
-                mase = format_dec(r['mase'], 2)
-                rows.append(f"{head} & {MODEL_TEX[m]} & {h} & {mae_mi} & {mape} & {mase} \\\\")
-        if i < len(keys) - 1:
-            rows.append(r"\addlinespace")
-    body = "\n".join(rows)
-    tex = (
-        "% Gerado por evaluation.metrics_by_series_table -- nao editar a mao.\n"
-        "\\begin{table}[htb]\n\\centering\n"
-        "\\caption{M\\'etricas de erro por s\\'erie, modelo e horizonte "
-        "(m\\'edia nas dobras).}\n"
-        "\\label{tab:metricas-por-serie}\n\\footnotesize\n"
-        "\\begin{tabular}{llrrrr}\n\\toprule\n"
-        "S\\'erie & Modelo & $h$ & MAE (R\\$ mi) & MAPE (\\%) & MASE \\\\\n\\midrule\n"
-        f"{body}\n"
-        "\\bottomrule\n\\end{tabular}\n"
-        "\\fonte{Elabora\\c{c}\\~ao pr\\'opria.}\n"
-        "\\end{table}\n"
-    )
-    out = table_path(cfg, "tab_metricas_por_serie")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(tex, encoding="utf-8")
-    return out
-
-
-def municipality_rank_table(cfg: PipelineConfig) -> Path:
-    """Gera tab_ranque_municipios.tex.
-
-    Para cada (municipio, tributo), ordena os quatro metodos pela MEDIANA do
-    MASE em h=12 e reporta a sequencia 1o-4o lugar e a mediana do vencedor.
-    Permite ler descritivamente se a ordenacao muda conforme o perfil do
-    municipio -- sem teste formal (tres municipios sao poucos para isso).
-    """
-    from forecasting.io import table_path
-
-    cv = load_cv(cfg)
-    sub = cv[cv["step"] == 12]
-    summ = fold_metrics(sub, ["municipio_nome", "tributo", "modelo"])
-    rows: list[str] = []
-    keys = [(name, t) for _k, name, t in series_keys(cfg)]
-    for i, (mun, trib) in enumerate(keys):
-        block = summ[(summ["municipio_nome"] == mun) &
-                     (summ["tributo"] == trib)].sort_values("mase_med")
-        models_tex = [MODEL_TEX[m] for m in block["modelo"]]
-        if models_tex:
-            # Negrito no primeiro colocado, isto e, no melhor modelo da linha.
-            models_tex[0] = f"\\textbf{{{models_tex[0]}}}"
-        order = " $\\succ$ ".join(models_tex)
-        winner = block.iloc[0]
-        wmase = format_dec(winner['mase_med'], 2)
-        rows.append(f"{mun} & {trib} & {order} & {wmase} \\\\")
-        if trib == "ISSQN" and i < len(keys) - 1:
-            rows.append(r"\addlinespace")
-    from forecasting.config import styled_table
-    tex = styled_table(
-        gerado_por="evaluation.municipality_rank_table",
-        caption=("Ranque dos m\\'etodos pela mediana do MASE em $h=12$, por "
-                 "munic\\'ipio e tributo (ordem decrescente de desempenho)."),
-        label="tab:ranque-municipios",
-        colspec="l l L r",
-        header=["Munic\\'ipio", "Tributo",
-                "Ranque ($1^{\\text{o}} \\succ 4^{\\text{o}}$)",
-                "MASE do $1^{\\text{o}}$"],
-        rows=rows,
-        footnote=("$\\succ$ indica desempenho superior (menor MASE); em negrito, "
-                  "o 1\\textsuperscript{o} colocado. "
-                  "MASE $<1$: supera o \\emph{baseline} Na\\\"ive sazonal."),
-        fonte="Elabora\\c{c}\\~ao pr\\'opria.",
-        stripe=True,
-        size="small",
-    )
-    out = table_path(cfg, "tab_ranque_municipios")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(tex, encoding="utf-8")
-    return out
-
-
-def mase_boxplot(cfg: PipelineConfig) -> Path:
-    """Gera fig_boxplot_mase.pdf: distribuicao do MASE por modelo, facetada por
-    horizonte (h=1 e h=12). Cada ponto e uma dobra; a linha em MASE=1 marca o
-    baseline. Mostra dispersao e estabilidade, nao so a media."""
-    import matplotlib.pyplot as plt
-
-    from forecasting.plotting import model_boxplot, save_figure, setup_matplotlib_thesis
-
-    setup_matplotlib_thesis()
-    cv = load_cv(cfg)
-    fig, axes = plt.subplots(1, 2, figsize=(6.2, 3.3), sharey=True)
-    for ax, h in zip(axes, (1, 12)):
-        data = [cv[(cv["step"] == h) & (cv["modelo"] == m)]["scaled_err"].to_numpy()
-                for m in MODEL_ORDER]
-        model_boxplot(ax, data, MODEL_ORDER)
-        ax.set_title(f"Horizonte $h = {h}$")
-        if h == 1:
-            ax.set_ylabel("MASE (por dobra)")
-    out = save_figure(fig, "fig_boxplot_mase", cfg.figures_dir_abs)
-    plt.close(fig)
-    return out
-
-
 def mase_heatmap(cfg: PipelineConfig) -> Path:
     """Gera fig_mase_heatmap.pdf: mapa de calor do MASE mediano em h=12.
 
     Linhas = as seis series (3 IPTU em cima, 3 ISSQN embaixo, com divisor e
     rotulos de bloco); colunas = os seis modelos na ordem canonica. Cor
-    sequencial quente da casa (creme p/ MASE baixo/bom -> tinta escura p/ alto/
-    ruim). Cada celula traz o valor (vircula, 2 casas); o menor de cada linha
+    sequencial azul da casa (quase-branco p/ MASE baixo -> azul-escuro p/
+    alto). Cada celula traz o valor (virgula, 2 casas); o menor de cada linha
     (vencedor) sai em negrito com contorno. Le-se de relance: bloco IPTU claro
     (baixo) vs bloco ISSQN escuro (alto). So le o cache e plota."""
     import matplotlib.pyplot as plt
@@ -348,151 +233,74 @@ def mase_heatmap(cfg: PipelineConfig) -> Path:
     row_keys = [(t, mun) for t in ("IPTU", "ISSQN") for mun in mun_order]
     lookup = {(r["tributo"], r["municipio_nome"], r["modelo"]): r["mase_med"]
               for _i, r in fm.iterrows()}
-    import numpy as np
     M = np.array([[lookup[(t, mun, m)] for m in MODEL_ORDER]
                   for (t, mun) in row_keys])
     n_rows, n_cols = M.shape
 
-    # Mapa sequencial quente da casa: creme (MASE baixo/bom) -> tinta escura
-    # (alto/ruim), derivado do bege do documento.
     cmap = LinearSegmentedColormap.from_list(
-        "forecast_warm", ["#F4EFE4", "#D8C39A", "#B98C4E", "#8A5A2B", "#45413A"])
+        "munitax_mase", ["#F7FBFF", "#D8ECFF", "#8AB4F8", "#0582FF", "#174EA6"])
     norm = Normalize(vmin=0.2, vmax=1.7)
 
-    fig, ax = plt.subplots(figsize=(6.0, 3.5))
-    ax.imshow(M, cmap=cmap, norm=norm, aspect="auto",
-              extent=(0, n_cols, n_rows, 0), interpolation="nearest")
+    left_cols = 2
+    fig, ax = plt.subplots(figsize=(6.0, 3.15))
+    ax.set_xlim(0, left_cols + n_cols)
+    ax.set_ylim(n_rows + 1, 0)
+    ax.set_facecolor("white")
 
-    # Anotacao das celulas + realce do vencedor (menor MASE) de cada linha.
+    header_fill = "#F6F9FC"
+    stripe_fill = "#FAFBFD"
+    rule = "#DADCE0"
+    text = "#202124"
+    muted = "#5F6368"
+
+    for j in range(left_cols + n_cols):
+        ax.add_patch(Rectangle((j, 0), 1, 1, facecolor=header_fill,
+                               edgecolor="white", linewidth=1.0, zorder=1))
+    ax.text(0.5, 0.5, "Tributo", ha="center", va="center",
+            fontsize=8.0, fontweight="semibold", color=text)
+    ax.text(1.5, 0.5, "Município", ha="center", va="center",
+            fontsize=8.0, fontweight="semibold", color=text)
+    for j, m in enumerate(MODEL_ORDER):
+        ax.text(left_cols + j + 0.5, 0.5, MODEL_LABELS[m], ha="center",
+                va="center", fontsize=8.0, fontweight="semibold", color=text)
+
+    for i, (trib, mun) in enumerate(row_keys):
+        y = i + 1
+        if i % 2 == 1:
+            ax.add_patch(Rectangle((0, y), left_cols + n_cols, 1,
+                                   facecolor=stripe_fill, edgecolor="none", zorder=0))
+        ax.text(0.5, y + 0.5, trib, ha="center", va="center",
+                fontsize=7.8, color=muted, fontweight="semibold")
+        ax.text(1.5, y + 0.5, mun, ha="center", va="center",
+                fontsize=7.8, color=text)
+
     for i in range(n_rows):
         j_best = int(np.argmin(M[i]))
         for j in range(n_cols):
             val = M[i, j]
-            # Texto claro sobre celula escura, escuro sobre clara.
-            txt_color = "#FBF8F1" if norm(val) > 0.55 else "#45413A"
+            x = left_cols + j
+            y = i + 1
+            ax.add_patch(Rectangle((x, y), 1, 1, facecolor=cmap(norm(val)),
+                                   edgecolor="white", linewidth=1.0, zorder=2))
+            txt_color = "white" if norm(val) > 0.62 else text
             weight = "bold" if j == j_best else "regular"
-            ax.text(j + 0.5, i + 0.5, format_dec(val, 2),
+            ax.text(x + 0.5, y + 0.5, format_dec(val, 2),
                     ha="center", va="center", color=txt_color,
-                    fontsize=8.3, fontweight=weight)
-        # Contorno no vencedor da linha.
-        ax.add_patch(Rectangle((j_best, i), 1, 1, fill=False,
-                               edgecolor="#FBF8F1", linewidth=1.6, zorder=4))
+                    fontsize=7.8, fontweight=weight, zorder=3)
+        ax.add_patch(Rectangle((left_cols + j_best, i + 1), 1, 1, fill=False,
+                               edgecolor="white", linewidth=1.8, zorder=4))
 
-    # Divisor sutil entre o bloco IPTU (linhas 0-2) e ISSQN (linhas 3-5).
-    ax.axhline(3, color="#FBF8F1", linewidth=2.4, zorder=5)
+    ax.axhline(1, color=rule, linewidth=0.7, zorder=5)
+    ax.axhline(4, color=rule, linewidth=0.8, zorder=5)
+    ax.axvline(left_cols, color=rule, linewidth=0.7, zorder=5)
 
-    # Rotulos de coluna (modelos) no topo.
-    ax.set_xticks(np.arange(n_cols) + 0.5)
-    ax.set_xticklabels([MODEL_LABELS[m] for m in MODEL_ORDER])
-    ax.xaxis.set_ticks_position("top")
-    ax.xaxis.set_label_position("top")
-    ax.tick_params(axis="x", length=0.0, labelcolor="#45413A", pad=4)
-
-    # Rotulos de linha = nome do municipio.
-    ax.set_yticks(np.arange(n_rows) + 0.5)
-    ax.set_yticklabels([mun for (_t, mun) in row_keys])
-    ax.tick_params(axis="y", length=0.0, labelcolor="#45413A", pad=4)
-
-    # Rotulos de bloco (IPTU / ISSQN) a esquerda, fora do eixo (afastados dos
-    # rotulos de municipio para nao colidir com descendentes tipo "Camaçari").
-    ax.text(-0.115, 0.815, "IPTU", transform=ax.transAxes, rotation=90,
-            ha="center", va="center", fontsize=9.5, fontweight="bold",
-            color="#45413A")
-    ax.text(-0.115, 0.27, "ISSQN", transform=ax.transAxes, rotation=90,
-            ha="center", va="center", fontsize=9.5, fontweight="bold",
-            color="#45413A")
-
-    # Limpa molduras e grade (o proprio mapa ja delimita).
+    ax.set_xticks([])
+    ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
     ax.grid(False)
-    ax.set_xlim(0, n_cols)
-    ax.set_ylim(n_rows, 0)
 
     out = save_figure(fig, "fig_mase_heatmap", cfg.figures_dir_abs)
-    plt.close(fig)
-    return out
-
-
-def skill_heatmap(cfg: PipelineConfig) -> Path:
-    """Generate skill score vs seasonal Naive for annual-horizon forecasts."""
-    import matplotlib.pyplot as plt
-    from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
-
-    from forecasting.config import MODEL_LABELS
-    from forecasting.plotting import save_figure, setup_matplotlib_thesis
-
-    setup_matplotlib_thesis()
-    cv = load_cv(cfg)
-    h12 = cv[cv["step"] == 12].copy()
-    h12["serie"] = h12["municipio_nome"] + "\n" + h12["tributo"]
-
-    row_models = [m for m in MODEL_ORDER if m != "Naive"]
-    series_order = [f"{name}\n{trib}" for _mk, name, trib in series_keys(cfg)]
-    mae = (
-        h12.groupby(["serie", "modelo"])["abs_err"]
-        .mean()
-        .unstack("modelo")
-        .reindex(series_order)
-    )
-    skill = pd.DataFrame({m: 1.0 - mae[m] / mae["Naive"] for m in row_models})
-    values = skill[row_models].to_numpy().T
-
-    cmap = LinearSegmentedColormap.from_list(
-        "skill_diverging", ["#A6552F", "#F3EFE6", "#3F7268"]
-    )
-    norm = TwoSlopeNorm(vmin=-0.6, vcenter=0.0, vmax=0.6)
-
-    fig, ax = plt.subplots(figsize=(6.2, 3.25))
-    mesh = ax.pcolormesh(
-        values,
-        cmap=cmap,
-        norm=norm,
-        edgecolors="#FBF8F1",
-        linewidth=1.0,
-        antialiased=True,
-    )
-    mesh.set_rasterized(False)
-
-    ax.set_xticks(np.arange(len(series_order)) + 0.5)
-    ax.set_xticklabels(
-        [s.replace("Salvador", "Sal.").replace("CamaÃ§ari", "Cam.").replace("IlhÃ©us", "Ilh.")
-         for s in series_order],
-        fontsize=7.8,
-    )
-    ax.set_yticks(np.arange(len(row_models)) + 0.5)
-    ax.set_yticklabels([MODEL_LABELS[m] for m in row_models], fontsize=8.6)
-    ax.invert_yaxis()
-    ax.tick_params(length=0, pad=4)
-    ax.grid(False)
-
-    for i, model in enumerate(row_models):
-        for j, serie in enumerate(series_order):
-            val = float(skill.loc[serie, model])
-            color = "#FBF8F1" if abs(norm(val) - 0.5) > 0.34 else "#33302B"
-            ax.text(
-                j + 0.5,
-                i + 0.5,
-                f"{val:+.2f}",
-                ha="center",
-                va="center",
-                fontsize=7.4,
-                color=color,
-                fontweight="bold" if val > 0 else "regular",
-            )
-
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.set_title(
-        "Skill score vs Naive em $h = 12$ (verde: vence; vermelho: perde)",
-        fontsize=9.2,
-        pad=8,
-    )
-    cbar = fig.colorbar(mesh, ax=ax, orientation="horizontal", fraction=0.055, pad=0.16)
-    cbar.set_label("1 - MAE(modelo) / MAE(Naive)", fontsize=7.6)
-    cbar.ax.tick_params(labelsize=7, length=0)
-
-    out = save_figure(fig, "fig_skill_heatmap", cfg.figures_dir_abs)
     plt.close(fig)
     return out
 
@@ -521,13 +329,13 @@ def horizonte_curva(cfg: PipelineConfig) -> Path:
     med = cv.groupby(["step", "modelo"])["scaled_err"].median().unstack()
     steps = med.index.to_numpy()
 
-    fig, ax = plt.subplots(figsize=(6.0, 3.6))
+    fig, ax = plt.subplots(figsize=(6.0, 3.05))
 
-    # Referencia em MASE = 1 (baseline sazonal empata). Rotulo logo acima da
-    # linha, recuado da borda direita para nao encostar na moldura.
+    # Referencia em MASE = 1 (baseline sazonal empata). Rotulo a ESQUERDA,
+    # regiao livre de curvas (a direita o ETS cruza a linha em h=11).
     ax.axhline(1.0, color=BASELINE_GREY, lw=1.0, ls=(0, (5, 4)), zorder=1)
-    ax.text(steps[-1], 1.015, "MASE = 1", color="#6E695E",
-            fontsize=7.8, va="bottom", ha="right")
+    ax.text(steps[0], 1.012, "MASE = 1", color="#5F6368",
+            fontsize=7.6, va="bottom", ha="left")
 
     # Demais modelos (linha fina, leve transparencia) e o Naive em destaque.
     for m in MODEL_ORDER:
@@ -550,6 +358,11 @@ def horizonte_curva(cfg: PipelineConfig) -> Path:
     ax.set_ylabel("MASE (mediano por dobra)")
     ax.set_xticks(steps)
     ax.set_xlim(steps[0] - 0.3, steps[-1] + 0.3)
+    from forecasting.plotting import br_axis
+    br_axis(ax, "y", decimals=1, step=0.1)
+    # Limite superior justo ao dado (pico ETS ~1,03): elimina a faixa morta no
+    # topo entre a legenda e as curvas, sem cortar nenhuma linha.
+    ax.set_ylim(0.57, 1.07)
     style_axis(ax)
 
     # Legenda enxuta, horizontal, acima do conjunto (ordem do MODEL_ORDER).
@@ -564,6 +377,58 @@ def horizonte_curva(cfg: PipelineConfig) -> Path:
     return out
 
 
+def naive_by_year_figure(cfg: PipelineConfig) -> Path:
+    """Gera fig_naive_por_ano.pdf: MAE de cada modelo RELATIVO ao Naive, por
+    ano-alvo, em h=12.
+
+    Mostra QUANDO o baseline vence: nos exercicios de recomposicao pos-pandemia
+    (2022 a 2024) o valor do mesmo mes do ano anterior acompanhou o degrau de
+    nivel mais depressa que os modelos; em 2021 e 2025 os modelos ganham com
+    folga. Abaixo de 1, o modelo erra menos que o Naive. Cache-only."""
+    import matplotlib.pyplot as plt
+
+    from forecasting.config import MODEL_COLORS, MODEL_LABELS
+    from forecasting.plotting import (
+        BASELINE_GREY,
+        br_axis,
+        clean_legend,
+        save_figure,
+        setup_matplotlib_thesis,
+        style_axis,
+    )
+
+    setup_matplotlib_thesis()
+    cv = load_cv(cfg)
+    h12 = cv[cv["step"] == 12].copy()
+    h12["ano"] = pd.to_datetime(h12["target_date"]).dt.year
+    mae_ano = h12.groupby(["ano", "modelo"])["abs_err"].mean().unstack()
+    rel = mae_ano.div(mae_ano["Naive"], axis=0)
+
+    fig, ax = plt.subplots(figsize=(6.0, 2.9))
+    ax.axhline(1.0, color=BASELINE_GREY, lw=1.0, ls=(0, (5, 4)), zorder=1)
+    # Rotulo acima do ponto de 2021 (Theta ~1,01), com folga clara, para nao
+    # colidir com o marcador ciano nem com a linha ascendente para 2022.
+    ax.text(rel.index[0] - 0.34, 1.08, "Naïve = 1", color="#5F6368",
+            fontsize=7.6, va="bottom", ha="left")
+    for m in MODEL_ORDER:
+        if m == "Naive" or m not in rel.columns:
+            continue
+        ax.plot(rel.index, rel[m].to_numpy(), color=MODEL_COLORS[m], lw=1.6,
+                marker="o", markersize=3.6, markeredgecolor="white",
+                markeredgewidth=0.7, label=MODEL_LABELS[m], zorder=3)
+    ax.set_xticks(list(rel.index))
+    ax.set_xlabel("Ano-alvo da previsão")
+    ax.set_ylabel("MAE relativo ao Naïve")
+    ax.margins(y=0.10)
+    br_axis(ax, "y", decimals=1, step=0.2)
+    style_axis(ax)
+    handles, labels = ax.get_legend_handles_labels()
+    clean_legend(fig, handles, labels, ncol=5)
+    out = save_figure(fig, "fig_naive_por_ano", cfg.figures_dir_abs)
+    plt.close(fig)
+    return out
+
+
 def covid_regime_note(cfg: PipelineConfig) -> Path:
     """Materializa o efeito do regime pandemico, cumprindo a promessa
     metodologica de reportar metricas separadas por regime temporal.
@@ -572,7 +437,7 @@ def covid_regime_note(cfg: PipelineConfig) -> Path:
     pandemia (2021) versus o regime de normalizacao (2022--2025), por modelo
     e horizonte, e grava em ``data/forecasts/covid_regime.txt``. Da
     proveniencia auditavel aos numeros citados na nota sobre o periodo
-    pandemico.
+    pandemico (Secao 5 dos resultados).
     """
     from forecasting.models import covid_regime
 
@@ -598,15 +463,11 @@ def covid_regime_note(cfg: PipelineConfig) -> Path:
 
 
 def run_all(cfg: PipelineConfig) -> list[Path]:
-    """Gera os artefatos de avaliacao (Secoes 5.3 e 5.4) a partir do cache."""
-    # metrics_by_series_table() NAO entra no build: a tabela por serie nao e
-    # usada no corpo (seu conteudo ja esta em tab_ranque_municipios +
-    # tab_metricas_comparacao). A funcao fica disponivel para um eventual
-    # apendice, mas nao se gera artefato morto por padrao.
+    """Gera os artefatos de avaliacao do documento a partir do cache."""
     return [
         metrics_table(cfg),
-        municipality_rank_table(cfg),
-        mase_boxplot(cfg),
-        skill_heatmap(cfg),
+        mase_heatmap(cfg),
+        horizonte_curva(cfg),
+        naive_by_year_figure(cfg),
         covid_regime_note(cfg),
     ]

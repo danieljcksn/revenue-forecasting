@@ -1,8 +1,11 @@
-"""Model-parameter tables and forecast diagnostic figures.
+"""Tabelas de parametros e figuras por modelo (Secao 5.2 do TCC).
 
-Reads the rolling-origin cache for forecast-vs-realized figures and performs
-full-series fits only when parameter tables need them. It does not rerun
-rolling-origin validation.
+Le o cache da validacao por origem movel (cv_all.csv) para as figuras de
+previsao versus realizado e ajusta cada modelo UMA vez na serie completa
+(barato) para as tabelas de parametros e os diagnosticos. Reflete o PORTFOLIO
+NOVO da reauditoria: ETS via statsforecast AutoETS (taxonomia completa), SARIMA
+em statsmodels com D=1 (ordens da janela inicial), Prophet mensal corrigido.
+Nao re-executa a validacao por origem movel.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from forecasting.config import (
     MODEL_LABELS,
     MODEL_ORDER,
     PipelineConfig,
+    format_brl,
     format_dec,
     series_keys,
 )
@@ -29,8 +33,12 @@ _MUN_ORDER = ["salvador", "camacari", "ilheus"]
 _MUN_LABEL = {"salvador": "Salvador", "camacari": "Camaçari", "ilheus": "Ilhéus"}
 _TAX_ORDER = ["IPTU", "ISSQN"]
 
-# SARIMA orders used for full-sample diagnostic fits. They are fixed here so the
-# reporting build does not need to run pmdarima order selection.
+# Ordens SARIMA com D=1, selecionadas pelo auto_arima (test=KPSS, D forcado=1)
+# sobre a AMOSTRA COMPLETA -- coerente com o "ajuste na amostra completa" da
+# tabela (a validacao por origem movel congela as ordens da janela inicial, sem
+# vazamento; convencao identica a do monografia original). Fixadas aqui para nao
+# reintroduzir a dependencia de pmdarima no ambiente de build (statsforecast/numba
+# usa numpy 2.x, incompativel com o pmdarima compilado).
 _SARIMA_D1_ORDERS = {
     ("salvador", "IPTU"):  ((1, 0, 0), (0, 1, 1, 12)),
     ("salvador", "ISSQN"): ((1, 1, 2), (0, 1, 1, 12)),
@@ -63,34 +71,34 @@ def ets_params_table(cfg: PipelineConfig) -> Path:
         md = m.model_
         spec = str(md["method"])  # ex.: "ETS(M,A,A)" / "ETS(A,Ad,M)"
         par = np.asarray(md["par"], dtype=float)
-        # statsforecast stores [alpha, beta, gamma, phi] in the first slots;
-        # missing components are NaN and become "--" in format_dec.
+        # statsforecast reserva [alpha, beta, gamma, phi] nas 4 primeiras
+        # posicoes; componente ausente vem como NaN (-> "--" no format_dec).
         alpha, beta, gamma, phi = par[0], par[1], par[2], par[3]
         aicc = float(md.get("aicc", float("nan")))
         rows.append(
             f"{name} & {trib} & {spec} & {format_dec(alpha)} & "
             f"{format_dec(beta)} & {format_dec(gamma)} & {format_dec(phi)} & "
-            f"{format_dec(aicc, 1)} \\\\")
+            f"{format_brl(aicc, 1)} \\\\")
         if trib == "ISSQN" and i < len(keys) - 1:
             rows.append(r"\addlinespace")
     tex = styled_table(
         gerado_por="model_reports.ets_params_table",
-        caption="Especifica\\c{c}\\~ao ETS selecionada por AICc sobre a taxonomia "
-        "completa (AutoETS) e par\\^ametros de suaviza\\c{c}\\~ao estimados, por "
-        "s\\'erie (ajuste na amostra completa).",
+        caption="Especifica\\c{c}\\~oes ETS por s\\'erie",
         label="tab:ets-params",
         colspec="l l l C C C C C",
         header=["Munic\\'ipio", "Tributo", "Especifica\\c{c}\\~ao", "$\\alpha$",
                 "$\\beta$", "$\\gamma$", "$\\phi$", "AICc"],
         rows=rows,
-        footnote="Taxonomia ETS(erro, tend\\^encia, sazonal); "
-        "A = aditivo, M = multiplicativo, N = ausente, A\\textsubscript{d} = "
-        "amortecido. $\\alpha,\\beta,\\gamma$: suaviza\\c{c}\\~ao de "
-        "n\\'ivel, tend\\^encia e sazonalidade; $\\phi$: amortecimento. "
-        "Sele\\c{c}\\~ao automatica fiel ao \\texttt{forecast::ets} de Hyndman.",
+        # Nota alinhada ao texto defendido (a versao commitada do artefato foi
+        # hand-editada em 02/07 sem retroalimentar o gerador; aqui reconcilia).
+        footnote="Na nota\\c{c}\\~ao ETS(erro, tend\\^encia, sazonalidade), "
+        "A indica componente aditivo, M multiplicativo e N ausente. "
+        "A sele\\c{c}\\~ao autom\\'atica ret\\'em a configura\\c{c}\\~ao com "
+        "melhor ajuste penalizado.",
         fonte="Elabora\\c{c}\\~ao pr\\'opria.",
         stripe=True,
         size="footnotesize",
+        floating=False,
     )
     out = table_path(cfg, "tab_ets_params")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -125,20 +133,18 @@ def sarima_params_table(cfg: PipelineConfig) -> Path:
         except Exception:
             lb_p = float("nan")
         order_tex = f"$({p},{d},{q})({P},{D},{Q})_{{12}}$"
+        aic_txt = format_dec(fm.aic, 1).replace("-", "$-$")
         rows.append(
-            f"{name} & {trib} & {order_tex} & {format_dec(fm.aic, 1)} & "
+            f"{name} & {trib} & {order_tex} & {aic_txt} & "
             f"{format_dec(lb_p, 3)} \\\\")
         if trib == "ISSQN" and i < len(keys) - 1:
             rows.append(r"\addlinespace")
     tex = styled_table(
         gerado_por="model_reports.sarima_params_table",
-        caption="Ordens SARIMA (com diferencia\\c{c}\\~ao sazonal $D=1$) "
-        "selecionadas na janela inicial, AIC e diagn\\'ostico de Ljung-Box "
-        "dos res\\'iduos, por s\\'erie (ajuste na amostra completa, escala "
-        "logar\\'itmica).",
+        caption="Especifica\\c{c}\\~oes SARIMA por s\\'erie",
         label="tab:sarima-params",
-        colspec="l l L c c",
-        header=["Munic\\'ipio", "Tributo", "ARIMA$(p,d,q)(P,D,Q)_{12}$", "AIC",
+        colspec="l l L C C",
+        header=["Munic\\'ipio", "Tributo", "Especifica\\c{c}\\~ao", "AIC",
                 "$p$ (Ljung-Box)"],
         rows=rows,
         footnote="$D=1$ for\\c{c}ado (coerente com a forte sazonalidade $F_S$ da "
@@ -151,7 +157,8 @@ def sarima_params_table(cfg: PipelineConfig) -> Path:
         "limita\\c{c}\\~ao reportada com transpar\\^encia.",
         fonte="Elabora\\c{c}\\~ao pr\\'opria.",
         stripe=True,
-        size="small",
+        size="footnotesize",
+        floating=False,
     )
     out = table_path(cfg, "tab_sarima_params")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -159,94 +166,73 @@ def sarima_params_table(cfg: PipelineConfig) -> Path:
     return out
 
 
-# Model style tuples derived from config constants.
+# Estilo por modelo (nome, rotulo de exibicao, cor canonica), da FONTE UNICA
+# (config.MODEL_ORDER/MODEL_LABELS/MODEL_COLORS). Sem hex solto.
 _MODEL_STYLE = [(m, MODEL_LABELS[m], MODEL_COLORS[m]) for m in MODEL_ORDER]
 
 
 def forecasts_consolidated_figure(cfg: PipelineConfig) -> Path:
-    """Generate the forecast-vs-realized panel for one-step forecasts."""
+    """fig_forecasts_formais.pdf: painel 3x2 (municipio x tributo) com a serie
+    realizada, a AMPLITUDE das previsoes um-passo-a-frente dos seis modelos
+    (faixa min-max, sem espaguete de linhas) e o Ensemble destacado como
+    recomendacao operacional. Le apenas o cache (h=1)."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
 
     from forecasting.eda import prepare_series
     from forecasting.evaluation import load_cv
-    from forecasting.plotting import save_figure
+    from forecasting.plotting import REALIZED_INK, save_figure, style_axis
 
     setup_matplotlib_thesis()
     cv = load_cv(cfg)
     series = prepare_series(cfg, impute=True)
-    first_forecast = cv["target_date"].min()
-    x_start = first_forecast - pd.DateOffset(months=12)
-    x_end = cv["target_date"].max()
-    fig, axes = plt.subplots(3, 2, figsize=(6.3, 7.0), sharex=True)
+    first_origin = pd.to_datetime(cv["origin"]).min()
+    band_fill = "#D3E6FB"      # azul-superficie: faixa entre os seis previsores
+    ens_color = MODEL_COLORS["Ensemble"]
+    fig, axes = plt.subplots(3, 2, figsize=(6.0, 6.4), sharex=True)
     for r, mk in enumerate(_MUN_ORDER):
         for c, trib in enumerate(_TAX_ORDER):
             ax = axes[r, c]
             s = series[(mk, trib)] / 1e6
-            s_view = s.loc[(s.index >= x_start) & (s.index <= x_end)]
-            ax.plot(s_view.index, s_view.to_numpy(), color="#2F2D29",
-                    lw=1.7, alpha=0.82, zorder=3)
-            ax.axvline(first_forecast, color="#B4B0A6", lw=0.8,
-                       ls=(0, (3, 3)), zorder=1)
-            for mname, _lab, color in _MODEL_STYLE:
-                sub = cv[(cv["municipio"] == mk) & (cv["tributo"] == trib) &
-                         (cv["modelo"] == mname) & (cv["step"] == 1)].sort_values("target_date")
-                ax.plot(sub["target_date"], sub["y_pred"] / 1e6, color=color,
-                        lw=0.95, alpha=0.88, zorder=2)
-            ax.set_xlim(x_start, x_end)
+            sub = cv[(cv["municipio"] == mk) & (cv["tributo"] == trib) &
+                     (cv["step"] == 1)]
+            wide = (sub.pivot_table(index="target_date", columns="modelo",
+                                    values="y_pred").sort_index() / 1e6)
+            ax.fill_between(wide.index, wide.min(axis=1), wide.max(axis=1),
+                            color=band_fill, lw=0, zorder=1)
+            ax.plot(wide.index, wide["Ensemble"], color=ens_color, lw=1.05,
+                    zorder=3)
+            ax.plot(s.index, s.to_numpy(), color=REALIZED_INK, lw=1.15, zorder=4)
+            ax.axvline(first_origin, color="#B7BCC2", lw=0.8, ls=(0, (3, 3)),
+                       zorder=2)
+            if r == 0 and c == 0:
+                ax.annotate("início das\nprevisões", xy=(first_origin, 1.0),
+                            xycoords=("data", "axes fraction"),
+                            xytext=(-4, -2), textcoords="offset points",
+                            ha="right", va="top", fontsize=7.0, color="#5F6368")
+            ax.margins(y=0.08)
+            style_axis(ax)
             if r == 0:
                 ax.set_title(trib)
             if c == 0:
-                ax.set_ylabel(f"{_MUN_LABEL[mk]}\n(R\\$ milhões)")
-    handles = [Line2D([0], [0], color="#2F2D29", lw=1.7, label="Realizado")]
-    handles += [Line2D([0], [0], color=color, lw=1.4, label=lab)
-                for _m, lab, color in _MODEL_STYLE]
-    fig.legend(handles=handles, loc="outside upper center", ncol=4)
+                ax.set_ylabel(f"{_MUN_LABEL[mk]}\n(R\\$ milhões)", fontsize=8.0)
+    fig.align_ylabels(axes[:, 0])
+    handles = [
+        Line2D([0], [0], color=REALIZED_INK, lw=1.5, label="Realizado"),
+        Patch(facecolor=band_fill, label="Faixa entre os modelos"),
+        Line2D([0], [0], color=ens_color, lw=1.5, label="Ensemble"),
+    ]
+    fig.legend(handles=handles, loc="outside upper center", ncol=3, fontsize=7.7)
     out = save_figure(fig, "fig_forecasts_formais", cfg.figures_dir_abs)
     plt.close(fig)
     return out
 
 
-def prophet_components_figure(cfg: PipelineConfig) -> Path:
-    """Generate Prophet trend and yearly-seasonality components."""
-    import matplotlib.pyplot as plt
-    from prophet import Prophet
-
-    from forecasting.eda import prepare_series
-    from forecasting.plotting import MODEL_COLORS as _MC
-    from forecasting.plotting import save_figure
-
-    setup_matplotlib_thesis()
-    s = prepare_series(cfg, impute=True)[("salvador", "IPTU")]
-    dfp = pd.DataFrame({"ds": pd.DatetimeIndex(s.index), "y": np.asarray(s, float)})
-    m = Prophet(weekly_seasonality=False, daily_seasonality=False,
-                yearly_seasonality=6, seasonality_mode="multiplicative",
-                changepoint_prior_scale=0.05, changepoint_range=0.8)
-    m.fit(dfp)
-    fcst = m.predict(pd.DataFrame({"ds": s.index}))
-    comps = [("trend", "Tendência"), ("yearly", "Sazonalidade anual")]
-    comps = [(c, lab) for c, lab in comps if c in fcst.columns]
-    fig, axes = plt.subplots(len(comps), 1, figsize=(6.0, 4.2), sharex=True)
-    for ax, (c, lab) in zip(np.atleast_1d(axes), comps):
-        # Multiplicative yearly seasonality is relative; multiply by trend to
-        # display its contribution in the original scale.
-        vals = fcst[c]
-        if c == "yearly" and m.seasonality_mode == "multiplicative":
-            vals = fcst["yearly"] * fcst["trend"]
-        ax.plot(fcst["ds"], np.asarray(vals) / 1e6, color=_MC["Prophet"], lw=1.2)
-        ax.set_ylabel(f"{lab}\n(R\\$ mi)", fontsize=8)
-    fig.suptitle("Decomposição do Prophet (corrigido) · Salvador, IPTU",
-                 fontsize=10, fontweight="bold")
-    out = save_figure(fig, "fig_prophet_componentes", cfg.figures_dir_abs)
-    plt.close(fig)
-    return out
-
-
 def run_all(cfg: PipelineConfig) -> list[Path]:
-    """Generate model report tables and figures."""
+    """Gera as tabelas de parametros e a figura de previsoes (Secao 5.2)."""
     return [
         ets_params_table(cfg),
         sarima_params_table(cfg),
         forecasts_consolidated_figure(cfg),
-        prophet_components_figure(cfg),
     ]

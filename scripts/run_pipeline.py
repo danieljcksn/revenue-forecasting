@@ -1,21 +1,27 @@
-"""Training driver for rolling-origin validation on the core series.
+"""Driver da modelagem: validacao por origem movel das seis series x quatro modelos.
 
-For each municipality-tax series and each core model (seasonal Naive, ETS,
-SARIMA, Prophet), this script runs rolling-origin validation and caches the
-long-format result. Downstream reporting scripts read this cache instead of
-retraining models.
+Executa, para cada serie (municipio x tributo) e cada modelo parcimonioso
+(Naive Sazonal, ETS, SARIMA, Prophet), a validacao cruzada por origem movel
+descrita na Secao 4.7 do TCC, e cacheia o resultado consolidado em disco. As
+tabelas e figuras dos Capitulos 5 e 6 sao construidas a jusante a partir desse
+cache -- de modo que iterar no texto nao exige re-treinar nada.
 
 Saidas (em cfg.forecasts_dir):
   - cv_all.csv         : tabela longa (serie x modelo x origem x passo)
   - params_full.csv    : parametros do ajuste de cada modelo na serie completa
   - run_meta.json      : metadados da execucao (tempos, contagens)
 
-Reproducibility note: the canonical cache used by the manuscript contains six
-predictors (the four above plus Theta and Ensemble). This script remains as the
-portable four-model driver for the package.
+NOTA (reprodutibilidade): o portfolio reportado no TCC tem SEIS modelos e e
+regenerado por ``scripts/run_pipeline_full.py`` (pipeline canonico). Este
+driver reproduz apenas o NUCLEO historico de quatro modelos, util para
+depuracao rapida.
+
+Por padrao a saida vai para ``cv_all_nucleo.csv``, preservando o cache
+canonico de seis modelos; use ``--force`` para sobrescrever ``cv_all.csv``
+deliberadamente.
 
 Uso:
-  python scripts/run_pipeline.py
+  python scripts/run_pipeline.py [--force]
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
     os.environ.setdefault(_v, "1")
 
 import json
+import sys
 import time
 import warnings
 from pathlib import Path
@@ -46,8 +53,11 @@ from forecasting.eda import prepare_series
 warnings.filterwarnings("ignore")
 
 def run_models(cfg: PipelineConfig) -> list[Path]:
-    # Fix global RNG state before any model fit. The classical models are
-    # deterministic, but this keeps stochastic dependencies explicit.
+    # Reprodutibilidade: fixa as seeds globais (numpy/random) ANTES de qualquer
+    # ajuste, com a mesma semente dos notebooks. Naive/ETS/SARIMA sao
+    # deterministas; isto torna EXPLICITA a semente sob a qual o Prophet e
+    # ajustado (Prophet usa otimizacao MAP, deterministica, sem RNG do numpy;
+    # ver tests/test_rolling_origin.py::test_set_global_seeds).
     M.set_global_seeds()
     series = prepare_series(cfg, impute=True)
     cv_frames: list[pd.DataFrame] = []
@@ -72,7 +82,7 @@ def run_models(cfg: PipelineConfig) -> list[Path]:
             cv["regime"] = cv["target_date"].apply(lambda d: M.covid_regime(d, cfg))
             cv_frames.append(cv)
 
-            # Full-series fit used to export model parameters.
+            # ajuste canonico na serie completa -> tabela de parametros
             full = M.fit_sarima(s) if model_name == "SARIMA" else fit_fn(s)
             param_rows.append({
                 "municipio": mun_key, "municipio_nome": mun_name,
@@ -92,7 +102,14 @@ def run_models(cfg: PipelineConfig) -> list[Path]:
 
     out_dir = cfg.forecasts_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    p_cv = out_dir / "cv_all.csv"
+    # Blindagem do cache canonico (6 modelos): sem --force, este driver de
+    # 4 modelos escreve em cv_all_nucleo.csv e NAO toca no cv_all.csv.
+    force = "--force" in sys.argv
+    p_cv = out_dir / ("cv_all.csv" if force else "cv_all_nucleo.csv")
+    if not force:
+        print("\nAVISO: cache canonico preservado; nucleo de 4 modelos gravado "
+              "em cv_all_nucleo.csv (use --force para sobrescrever cv_all.csv; "
+              "o pipeline canonico de 6 modelos e scripts/run_pipeline_full.py).")
     p_par = out_dir / "params_full.csv"
     p_meta = out_dir / "run_meta.json"
     cv_all.to_csv(p_cv, index=False, encoding="utf-8")

@@ -1,0 +1,65 @@
+{
+  "confrontos": 1559,
+  "modelos_fixos": {
+    "Naive": {
+      "vitorias": 1059,
+      "n": 1559,
+      "taxa": 67.9
+    },
+    "ETS": {
+      "vitorias": 969,
+      "n": 1559,
+      "taxa": 62.2
+    },
+    "SARIMA": {
+      "vitorias": 921,
+      "n": 1559,
+      "taxa": 59.1
+    },
+    "Theta": {
+      "vitorias": 974,
+      "n": 1559,
+      "taxa": 62.5
+    },
+    "Prophet": {
+      "vitorias": 978,
+      "n": 1559,
+      "taxa": 62.7
+    },
+    "Ensemble": {
+      "vitorias": 1045,
+      "n": 1559,
+      "taxa": 67.0
+    }
+  },
+  "estrategias": {
+    "melhor_expost": {
+      "vitorias": 1157,
+      "n": 1559,
+      "taxa": 74.2
+    },
+    "melhor_walkforward": {
+      "vitorias": 1022,
+      "n": 1559,
+      "taxa": 65.6
+    },
+    "melhor_maxwins": {
+      "vitorias": 1230,
+      "n": 1559,
+      "taxa": 78.9
+    }
+  },
+  "oraculo_ano": {
+    "vitorias": 1322,
+    "n": 1559,
+    "taxa": 84.8
+  },
+  "expost_escolhas": {
+    "Naive": 88,
+    "Prophet": 61,
+    "Theta": 49,
+    "ETS": 45,
+    "SARIMA": 43,
+    "Ensemble": 32
+  }
+}

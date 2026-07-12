@@ -2,27 +2,29 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
-.pytest_cache/
-.ruff_cache/
-.coverage
-htmlcov/
+*.egg
+.venv/
+venv/
+.eggs/
 build/
 dist/
 
-# Environments
-.venv/
-venv/
-.env
-
-# Notebooks
+# Jupyter
 .ipynb_checkpoints/
+*.ipynb_checkpoints
 
-# Local manuscript/output state
-.tcc-pipeline.json
-figures/generated/
-tables/generated/
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
 
-# Scratch runs and backups
-_*/
-scratch/
-tmp/
+# Editores
+.vscode/
+.idea/
+
+# Modelos treinados e checkpoints (regerados pelos notebooks)
+checkpoints/
+models_cache/
+*.h5
+*.keras

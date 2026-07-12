@@ -1,0 +1,39 @@
+{
+  "series": 318,
+  "municipios": 230,
+  "confrontos": 1559,
+  "ens_vitorias": 1045,
+  "ens_winrate": 67.0,
+  "expost_vitorias": 1157,
+  "expost_winrate": 74.2,
+  "municipios_vantagem_positiva": 188,
+  "municipios_total_mapa": 230,
+  "vantagem_mediana_pp": 10.5,
+  "corr_logpop_vantagem": -0.206,
+  "winrate_por_faixa": [
+    {
+      "faixa": "até 20 mil",
+      "n": 679,
+      "winrate": 68.3,
+      "margem_mediana": 16.0
+    },
+    {
+      "faixa": "20 a 50 mil",
+      "n": 536,
+      "winrate": 65.9,
+      "margem_mediana": 8.8
+    },
+    {
+      "faixa": "50 a 100 mil",
+      "n": 184,
+      "winrate": 65.8,
+      "margem_mediana": 11.0
+    },
+    {
+      "faixa": "acima de 100 mil",
+      "n": 160,
+      "winrate": 66.9,
+      "margem_mediana": 4.3
+    }
+  ]
+}
